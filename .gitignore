@@ -1,0 +1,22 @@
+bin/
+obj/
+*.user
+.rhdock/
+.artifacts/
+frontend/node_modules/
+frontend/dist/
+.DS_Store
+
+# Generated files and local settings
+*.tsbuildinfo
+*.log
+*.yak
+.env
+.env.*
+!.env.example
+.vs/
+.idea/
+.claude/
+.codex/
+.agents/
+.opencode/

@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <TargetExt>.rhp</TargetExt>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Version>0.5.8</Version>
+    <Description>Rhino 8 host for single-Script C# Workspaces</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../rhDock.Core/rhDock.Core.csproj" />
+    <ProjectReference Include="../rhDock.Agents/rhDock.Agents.csproj" />
+    <PackageReference Include="DiffPlex" Version="1.9.0" GeneratePathProperty="true" />
+    <PackageReference Include="RhinoCommon" Version="8.*" Private="false" ExcludeAssets="runtime" />
+    <EmbeddedResource Include="../../frontend/dist/index.html" LogicalName="rhDock.Frontend.index.html" />
+    <EmbeddedResource Include="Assets/PanelIcon.ico" LogicalName="rhDock.PanelIcon.ico" />
+  </ItemGroup>
+  <!-- A class library does not copy package assemblies; ship DiffPlex next to the plug-in, but not Roslyn, which Rhino provides. -->
+  <Target Name="CopyDiffPlex" AfterTargets="Build">
+    <Copy SourceFiles="$(PkgDiffPlex)/lib/net6.0/DiffPlex.dll" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+  </Target>
+  <Target Name="BuildFrontend" BeforeTargets="PrepareForBuild" Condition="!Exists('../../frontend/dist/index.html')">
+    <Exec Command="npm ci --no-audit --no-fund" WorkingDirectory="../../frontend" />
+    <Exec Command="npm run build" WorkingDirectory="../../frontend" />
+  </Target>
+</Project>

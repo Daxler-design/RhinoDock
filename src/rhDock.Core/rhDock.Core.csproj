@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- NOTE: installed Rhino uses 4.6; real repo requires C# 10 file-scoped namespaces. -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.6.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Remove="Template/**/*.cs" />
+    <EmbeddedResource Include="Template/**" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,67 @@
+import type { Agent, Snapshot } from './types';
+
+export const mock: Snapshot = {
+  revision: 1, repository: '~/Projects/facade-studio', scripts: [
+    { name: 'Facade Study', path: 'Components/FacadeStudy.cs', category: 'Facade' },
+    { name: 'Hex Layout', path: 'Components/HexLayout.cs', category: 'Pattern' },
+    { name: 'Curve Smooth', path: 'Components/CurveSmooth.cs', category: 'Curve' },
+  ], selected: 'Components/FacadeStudy.cs', status: 'completed', auto: false,
+  inputs: [
+    { name: 'Boundary', type: 'Curve', access: 'Item', optional: false, kind: 'pick', picked: '1 curve', count: 1, family: 'curve',
+      items: [{ label: 'NurbsCurve · degree 3 · 14 control points · closed', visible: true }],
+      preview: { visible: true, style: { color: '#9AA0F2', custom: false, weight: 2, size: 5, shading: 30 } } },
+    { name: 'Attractors', type: 'System.Collections.Generic.List`1[[Rhino.Geometry.Point3d, RhinoCommon]]', access: 'List', optional: false, kind: 'pick', picked: '3 points', count: 3, family: 'point',
+      items: [{ label: '(4.2, 7.815, 0)', visible: true }, { label: '(-2.14, 3.006, 0)', visible: true }, { label: '(10, -1.25, 0)', visible: false }],
+      preview: { visible: true, style: { color: '#9AA0F2', custom: false, weight: 1, size: 5, shading: 30 } } },
+    { name: 'CreaseEdges', type: 'System.Collections.Generic.List`1[[Rhino.Geometry.ComponentIndex, RhinoCommon]]', access: 'List', optional: false, kind: 'pick', picked: '2 sub-objects', count: 2,
+      items: [{ label: 'SubdEdge 0', visible: true }, { label: 'SubdEdge 2', visible: true }],
+      preview: { visible: true, style: { color: '#9AA0F2', custom: false, weight: 2, size: 5, shading: 30 } } },
+    { name: 'Width', type: 'Double', access: 'Item', optional: false, kind: 'number', value: '2.4', range: { min: 0, max: 10, step: 0.1 } },
+    { name: 'Angle', type: 'Double', access: 'Item', optional: false, kind: 'number', value: '1.51' },
+    { name: 'Count', type: 'Int32', access: 'Item', optional: false, kind: 'int', value: '12' },
+    { name: 'Labels', type: 'List<String>', access: 'List', optional: true, kind: 'list', value: 'North, South' },
+    { name: 'Refresh', type: 'Boolean', access: 'Item', optional: true, kind: 'boolean', value: 'false', boolStyle: 'press' },
+    { name: 'Tint', type: 'System.Drawing.Color', access: 'Item', optional: true, kind: 'color' },
+    { name: 'Palette', type: 'System.Collections.Generic.List`1[[System.Drawing.Color, System.Drawing.Primitives]]', access: 'List', optional: true, kind: 'color', value: '#9AA0F2, #56B98B80' },
+  ], outputs: [
+    { name: 'Panels', type: 'Mesh[]', count: 24, summary: '24 meshes', preview: true, visible: true, bake: true, family: 'surface', style: { color: '#40E0D0', custom: false, weight: 1, size: 5, shading: 30 } },
+    { name: 'Edges', type: 'Curve[]', count: 24, summary: '24 curves', preview: true, visible: true, bake: true, family: 'curve', style: { color: '#EC6F67', custom: true, weight: 2, size: 5, shading: 30 } },
+    { name: 'Centres', type: 'Point3d[]', count: 24, summary: '24 points', preview: true, visible: true, bake: true, family: 'point', style: { color: '#DAA520', custom: false, weight: 1, size: 5, shading: 30 } },
+    { name: 'Areas', type: 'Double[]', count: 24, summary: '24 values', values: ['1.24', '1.68', '1.52', '1.74'], preview: false, visible: false, bake: false },
+  ], log: ['Run completed in 42 ms'],
+  agent: undefined as Agent | undefined,
+};
+
+const item = { files: [] as string[], chips: [] as string[], images: [] as number[], checkpoint: false };
+export const mockAgent: Agent = {
+  viewId: 'sample-opencode',
+  agentId: 'opencode', agentName: 'OpenCode', features: { steer: true, rewind: true, permissions: true },
+  agents: [{ id: 'opencode', name: 'OpenCode', installed: true, install: 'Install OpenCode', docs: 'https://opencode.ai/v2/docs/', activities: ['done'] }, { id: 'claude', name: 'Claude Code', installed: true, install: 'Install Claude Code', docs: 'https://code.claude.com/docs', activities: ['running', 'input'] }, { id: 'pi', name: 'Pi', installed: true, install: 'Install Pi', docs: 'https://pi.dev' }, { id: 'cursor', name: 'Cursor', installed: false, install: 'Install Cursor', docs: 'https://cursor.com/cli' }],
+  favorites: ['openrouter/openai/gpt-6.1-sol'], plan: [{ status: 'Completed', content: 'Read the Script' }, { status: 'InProgress', content: 'Update the falloff and validate' }],
+  status: 'ready', agent: 'OpenCode 2.0.19', executable: '/opt/homebrew/bin/opencode', repository: '~/Projects/facade-studio', sessionId: 'ses_1', title: 'Shrink cells near the attractor', log: '/tmp/rhdock-agent.log',
+  usage: { used: 94980, size: 1050000, cost: 0.024 }, turn: { input: 1820, output: 412, cacheRead: 92748, cacheWrite: 0, total: 94980 }, mode: 'ask', images: true,
+  config: [
+    { id: 'model', name: 'Model', category: 'model', current: 'openrouter/openai/gpt-6.1-sol', options: [{ value: 'openrouter/openai/gpt-6.1-sol', name: 'GPT-6.1 Sol', group: 'OpenRouter', recent: true }, { value: 'openrouter/anthropic/claude-sonnet-5.5', name: 'Claude Sonnet 5.5', group: 'OpenRouter' }, ...Array.from({ length: 12 }, (_, i) => ({ value: `opencode/free-${i}`, name: `Free model ${i}`, group: 'OpenCode' }))] },
+    { id: 'effort', name: 'Effort', category: 'thought_level', current: 'default', options: ['low', 'medium', 'high', 'default'].map(value => ({ value, name: value })) },
+    { id: 'mode', name: 'Mode', category: 'mode', current: 'build', options: [{ value: 'build', name: 'build' }, { value: 'plan', name: 'plan' }] },
+  ],
+  commands: [{ name: 'init', description: 'guided AGENTS.md setup' }, { name: 'review', description: 'review changes [commit|branch|pr], defaults to uncommitted' }],
+  skills: [{ id: 'ponytail', name: 'ponytail', description: 'Forces the simplest solution that works' }, { id: 'opencode', name: 'OpenCode', description: 'Questions about OpenCode itself' }],
+  conversations: [{ id: 'ses_1', title: 'Shrink cells near the attractor and compare the resulting geometry against the original facade study using a table of measurements', updatedAt: '2026-10-01T09:12:00Z', activity: 'done', live: true, open: true }, { id: 'ses_0', title: 'Add a curve offset Script', updatedAt: '2026-09-30T16:40:00Z', activity: 'running', live: true }, { id: 'ses_question', title: 'Choose the falloff', activity: 'input', live: true }],
+  attachments: [], queued: [{ id: 901, text: 'Only the .cs files under Components, briefly, and then compare each of them with the matching Domain class in a table', steer: true }, { id: 902, text: 'Summarize the findings in a table with one row per Script and a column for its inputs', steer: false }],
+  rewound: { id: 'm-rewound', text: 'Now replace the falloff power with a smoothstep curve in every attractor Script and rerun them', filesRestored: true }, files: ['Components/FacadeStudy.cs', 'Components/HexLayout.cs', 'Core/Falloff.cs', 'AGENTS.md'],
+  changes: [{ path: 'Components/FacadeStudy.cs', status: 'modified', added: 2, removed: 1, diff: ' public static double Scale(double t)\n-    => 1 - t;\n+    => Math.Max(minScale,\n+        Math.Pow(1 - t, power));\n }\n' }],
+  items: [
+    { ...item, id: 1, kind: 'user', text: 'Make the cells shrink faster near the attractor, and keep the smallest cell above 0.2.', chips: ['Facade Study'], images: [901], checkpoint: true, elapsedMs: 28100 },
+    { ...item, id: 2, kind: 'thought', text: 'The falloff lives in the Facade Study Script. I should read it first.' },
+    { ...item, id: 3, kind: 'tool', text: '', title: 'read', toolKind: 'Read', status: 'Completed', files: ['Components/FacadeStudy.cs'], detail: 'Read file Components/FacadeStudy.cs, lines 1-40' },
+    { ...item, id: 4, kind: 'tool', text: '', title: 'patch', toolKind: 'Edit', status: 'Completed', files: ['Components/FacadeStudy.cs'], detail: '*** Begin Patch\n*** Update File: Components/FacadeStudy.cs\n@@\n-    => 1 - t;\n+    => Math.Max(minScale,\n+        Math.Pow(1 - t, power));\n*** End Patch' },
+    { ...item, id: 50, kind: 'tool', text: '', callId: 'task-1', title: 'Check the build', toolKind: 'Think', status: 'Completed' },
+    { ...item, id: 5, kind: 'tool', parent: 'task-1', text: '', title: 'shell', toolKind: 'Execute', status: 'Completed', files: [], detail: '$ dotnet build\nBuild succeeded.' },
+    { ...item, id: 6, kind: 'assistant', text: 'The falloff now uses `Math.Pow(1 - t, power)` with a **0.2** floor.\n\n| Input | Before | After |\n|---|---|---|\n| Power | 1 | 2.5 |\n| Min scale | 0 | 0.2 |\n\n```csharp\npublic static double Scale(double t, double power = 2.5, double minScale = 0.2)\n    => Math.Max(minScale, Math.Pow(1 - t, power));\n```\n\nSee [RhinoCommon](https://developer.rhino3d.com/api/rhinocommon/). Press Run to see it.' },
+    { ...item, id: 7, kind: 'proposal', text: '# Smoothstep falloff\n\n## Change\n- `Core/Falloff.cs`: replace `Math.Pow(1 - t, power)` with a smoothstep curve.\n- Keep the 0.2 floor.\n\n## Verification\n- Run the Facade Study Script and compare cell scales.' },
+  ],
+  question: { id: 'frm_1', title: 'Questions', fields: [{ key: 'q0', title: 'Falloff', description: 'How should the falloff curve behave near the attractor?', type: 'choice', custom: true, required: false,
+    options: [{ value: 'Power', label: 'Power', description: 'Math.Pow(1 - t, power): steep near the attractor' }, { value: 'Smoothstep', label: 'Smoothstep', description: 'Soft start and end' }] }] },
+  permission: { title: 'Components/FacadeStudy.cs', kind: 'Edit', detail: '-    double power = 2;\n+    double power = 2.5;', options: [{ id: 'once', name: 'Allow once', kind: 'AllowOnce' }, { id: 'always', name: 'Always allow', kind: 'AllowAlways' }, { id: 'reject', name: 'Reject', kind: 'RejectOnce' }] },
+};

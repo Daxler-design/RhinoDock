@@ -1,0 +1,6 @@
+name: rhdock
+version: 0.5.8
+authors:
+  - Daxler-design
+description: A live C# computational workspace inside Rhino 8.
+url: https://github.com/Daxler-design/RhinoDock

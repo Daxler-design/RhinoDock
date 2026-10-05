@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <NuGetAudit>false</NuGetAudit>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows')) and '$(RhinoAssemblyDir)' == ''">
+    <RhinoAssemblyDir>$(ProgramFiles)/Rhino 8/System</RhinoAssemblyDir>
+  </PropertyGroup>
+  <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('OSX')) and '$(RhinoAssemblyDir)' == ''">
+    <RhinoAssemblyDir>/Applications/Rhino 8.app/Contents/Frameworks/RhCore.framework/Resources</RhinoAssemblyDir>
+  </PropertyGroup>
+
+  <Target Name="CheckRhinoAssemblies" BeforeTargets="ResolveAssemblyReferences">
+    <Error Condition="'$(RhinoAssemblyDir)' == '' or !Exists('$(RhinoAssemblyDir)/RhinoCommon.dll')"
+           Text="RhinoCommon.dll was not found. Install Rhino 8 or set RhinoAssemblyDir to the directory containing RhinoCommon.dll (for example: dotnet build -p:RhinoAssemblyDir=/path/to/Rhino/assemblies)." />
+  </Target>
+
+  <ItemGroup>
+    <Reference Include="RhinoCommon">
+      <HintPath>$(RhinoAssemblyDir)/RhinoCommon.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+
+    <!-- For an external .NET 8-compatible DLL, place it in lib/ and uncomment
+         this reference after replacing the assembly and file names.
+    <Reference Include="YourLibrary">
+      <HintPath>lib/YourLibrary.dll</HintPath>
+    </Reference>
+    -->
+  </ItemGroup>
+</Project>

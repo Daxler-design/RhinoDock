@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Check repository language
+        shell: bash
+        run: |
+          ! git grep -nIP --untracked '(*UTF)[\x{3400}-\x{4DBF}\x{4E00}-\x{9FFF}\x{F900}-\x{FAFF}]'
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+      - name: Frontend bridge checks
+        working-directory: frontend
+        run: npm run check:bridge
+      - name: Development mirror checks
+        working-directory: frontend
+        run: npm run check:mirror
+      - name: Restore
+        run: dotnet restore rhdock.sln
+      - name: Build
+        run: dotnet build rhdock.sln --configuration Release --no-restore
+      - name: Core contract checks
+        run: dotnet run --project tools/smoke/smoke.csproj --configuration Release --no-build -- --core-only
+      - name: Offline agent protocol checks
+        run: dotnet run --project tools/smoke/smoke.csproj --configuration Release --no-build -- --agents-offline
+      - name: Agent host checks
+        run: dotnet run --project tools/smoke/smoke.csproj --configuration Release --no-build -- --agent-host
+      - name: UI bridge checks
+        run: dotnet run --project tools/smoke/smoke.csproj --configuration Release --no-build -- --ui-bridge
+      - name: Plugin metadata checks
+        run: dotnet run --project tools/smoke/smoke.csproj --configuration Release --no-build -- --plugin-metadata src/rhDock.Rhino/bin/Release/net8.0/rhDock.Rhino.rhp
