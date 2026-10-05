@@ -64,6 +64,15 @@ docs/               User and contributor guides
 
 Assembly names, namespaces, the `rhdock` Yak package name, and `.rhdock` data directory retain their existing identifiers for compatibility.
 
+## Acknowledgments
+
+RhinoDock was built by learning from and adapting the work of these open-source projects:
+
+- [shadcn/ui](https://github.com/shadcn-ui/ui) — UI components and patterns that helped shape the panel.
+- [MonoCode](https://github.com/hardbeat920/monocode) — agent harness design and integration patterns that informed the Agent tab.
+
+Thank you to their authors and contributors for sharing their work. Attribution and license details are in [third-party notices](THIRD-PARTY-NOTICES.md).
+
 ## License
 
 [MIT](LICENSE). Third-party code retains its own licenses; see [third-party notices](THIRD-PARTY-NOTICES.md). Rhino and external agent services are separate products with their own requirements.
