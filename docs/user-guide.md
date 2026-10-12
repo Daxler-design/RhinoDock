@@ -2,32 +2,35 @@
 
 ## Repositories and Scripts
 
-A **Loaded Repository** is a C# project containing Scripts. A **Script** is a public entry point with a `Run(...)` method. RhinoDock runs one selected Script at a time; a **Workspace** is its saved configuration for that repository.
+A **Working Repo** is a C# project containing Scripts. A **Script** is a class with a public `Run(...)` method. RhinoDock runs one selected Script at a time.
 
-Use New to create a starter in an empty destination, or Browse to open an existing repository. New refuses a nonempty destination. The Script picker supports names and category tags. See [Writing Scripts](scripts.md) for the source contract.
+In the Script tab, **New** creates a starter in an empty folder and **Browse** opens an existing repository. The picker searches names and category tags. To write your own, see [writing Scripts](scripts.md).
 
-Set scalar values directly; list inputs deliver the entire list in one call. Geometry inputs pick Rhino objects and stay linked to them. Sub-object inputs pick vertices, edges, or faces and carry their component indices. Changing picked geometry invalidates the old result.
+## Inputs
 
-## Run and inspect
+- Scalars (numbers, text, booleans, colors) are edited directly.
+- A list input receives the whole list in one call; RhinoDock never runs your Script once per item.
+- Geometry inputs pick Rhino objects and stay linked to them. Changing a picked object invalidates the old result.
+- Sub-object inputs pick vertices, edges, or faces and carry their indices.
 
-Run evaluates the selected Script once. Auto coalesces changes and runs again when Rhino can process them. Compile, input, and execution errors appear in the panel; failed or outdated results cannot supply Preview or Bake.
+## Run, Preview, Bake
 
-Preview draws temporary geometry without adding document objects. Input and output style controls set color and applicable size or shading. Primitive outputs appear in bounded tables; `Info` output appears in the Console. Bake adds selected current outputs to the active Rhino document in one undo record. Preview visibility does not select what gets Baked.
+**Run** evaluates the Script once. **Auto** runs again when inputs or source change; it starts off each time you reopen a repository or switch Scripts. Compile, input, and execution errors appear in the panel, and a failed or outdated result is never shown or baked.
 
-Solver Scripts keep one instance across Frames. Solve plays Frames; Pause stops playback; Step runs one Frame; Reset discards the instance. Input changes and source reload also discard it. Keep work per Frame short so Rhino stays responsive.
+**Preview** draws temporary geometry without touching the document, with color and size controls. Primitive outputs appear in tables, and an `Info` string output appears in the Console. **Bake** adds the outputs you select to the active document as one undo step. What you preview and what you bake are chosen separately.
+
+## Solvers
+
+A Script that declares a `Done` output is a Solver. **Solve** plays frames, **Pause** stops, **Step** runs one frame, and **Reset** discards its state. Changing an input or reloading the source also resets it. Keep each frame short so Rhino stays responsive.
 
 ## Save and resume
 
-RhinoDock automatically writes `.rhdock/workspace.json` in the Loaded Repository. It keeps up to 16 revisions with per-Script inputs, picks, display settings, and latest Run Records. Reopening restores the latest configuration with Auto off. A restored Run Record is historical: Run again before Preview or Bake.
+RhinoDock saves your inputs, picks, and display settings per Script in `.rhdock/workspace.json` inside the repository, keeping the last 16 versions. When you reopen, the settings come back with Auto off. The previous result is shown only as history: Run again before you Preview or Bake.
 
-Picked object IDs must resolve in the active Rhino document. Missing objects need to be picked again. Moving a repository does not prevent opening it; moving or renaming an individual Script changes the key for its saved settings.
+Picked objects must still exist in the active Rhino document, otherwise pick them again. Moving or renaming a Script file changes the key for its saved settings. **Export** writes the latest Workspace to a separate JSON file; it is not an import. Two Rhino processes on the same repository do not merge saves.
 
-Export writes the latest Workspace revision to a separate JSON file. It is not an import mechanism. Save failures are warnings and do not prevent running Scripts. Do not edit runtime JSON to simulate a successful Run. Simultaneous Rhino processes do not merge writes to the same Workspace.
+## More tabs
 
-## Agent tab
-
-Install and sign in to your chosen agent CLI using that agent's instructions, then select it in the Agent tab. The harness owns authentication, models, tools, and stored Conversations. RhinoDock provides context attachments, streamed replies, and supported permission, plan, review, and rewind controls.
-
-Capabilities vary by agent. Pi/omp do not provide approval prompts. An agent's saved permissions may allow actions without a new card. Rewind and Undo are bounded conveniences, not a replacement for Git or backups. Open Conversations can continue working in the background.
-
-Agent settings and MCP servers belong to the agent's own configuration. RhinoDock does not currently provide built-in Host Tools for agents to control Rhino. Read [security guidance](../SECURITY.md) and [known limitations](limitations.md).
+- [Agent](agent.md): a coding agent that works on your Scripts.
+- [Extensions](extensions.md): your own windows and Rhino integration.
+- [Debugging and the Mirror](debugging.md): logs and a browser copy of the panel.

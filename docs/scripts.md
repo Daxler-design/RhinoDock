@@ -32,7 +32,7 @@ Supported panel inputs include primitive scalars and lists, colors, Rhino geomet
 
 Declare `ref bool Done` (or `out bool Done`) for a Solver. The host keeps the instance across Frames, so fields can hold state. Each Frame calls `Run(...)` once. Set Done to finish. The host also stops playback on error or repeated unchanged outputs. Done is hidden from output controls.
 
-Use the packaged [CurveSmoothingComponent](../src/rhDock.Core/Template/Components/CurveSmoothingComponent.cs) as an example. Reset, input changes, source reload, and Script switches discard the instance. Static fields survive Reset within a compiled generation; do not use them for Solve state. Long calls block Rhino, so divide expensive work across Frames.
+Use the packaged [CurveSmoothingComponent](https://github.com/Daxler-design/RhinoDock/blob/main/src/rhDock.Core/Template/Components/CurveSmoothingComponent.cs) as an example. Reset, input changes, source reload, and Script switches discard the instance. Static fields survive Reset within a compiled generation; do not use them for Solve state. Long calls block Rhino, so divide expensive work across Frames.
 
 ## Compilation and dependencies
 

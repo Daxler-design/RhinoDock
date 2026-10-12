@@ -20,3 +20,8 @@ frontend/dist/
 .codex/
 .agents/
 .opencode/
+
+# Docs site
+docs/.vitepress/dist/
+docs/.vitepress/cache/
+docs/node_modules/

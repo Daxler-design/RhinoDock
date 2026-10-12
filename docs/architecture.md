@@ -1,7 +1,7 @@
 # Architecture
 
 ```text
-Loaded Repository -> Roslyn / ScriptRunner -> SingleScriptSession
+Working Repo -> Roslyn / ScriptRunner -> SingleScriptSession
                                                     |
                                               Rhino host
                                          inputs / Preview / Bake
@@ -14,6 +14,7 @@ Loaded Repository -> Roslyn / ScriptRunner -> SingleScriptSession
 - `rhDock.Core` compiles and discovers Scripts, runs the selected entry, manages collectible generations, and serializes supported Workspace values. It has no compile-time dependency on RhinoCommon, Eto, or Grasshopper. The starter repository is embedded here.
 - `rhDock.Rhino` owns commands, document binding, picks, UI-thread dispatch, Solver pacing, Preview, Bake, and the Eto WebView. `SingleScriptHost` adapts the Core Session; `SingleScriptPanel` exposes explicit actions and bounded JSON snapshots.
 - `rhDock.Agents` owns agent process lifetime, protocol adapters, capability metadata, and bounded text checkpoints. It is independent of Rhino and Script state. `AgentHost` in the Rhino module retains one harness per open Conversation and dispatches updates to the panel.
+- Extensions (in `rhDock.Rhino`) are folders in a separate Extension Repo. Each compiles into its own collectible load context and activates before the previous generation is disposed and unloaded. The public contract is `rhDock.Extensions`: `IRhDockExtension` and a small `ExtensionContext` (`OpenView`, `Scripts`, `StartProcess`, `Log`). Every member is a compatibility promise, so new capabilities start inside an Extension. Only copies of .NET or RhinoCommon values cross between Extensions and Scripts.
 - `frontend` renders snapshots with React. It sends actions through the Eto bridge and does not own geometry or execution state. Production assets are embedded in the plugin as one offline HTML file.
 
 ## Execution and lifetime
@@ -36,4 +37,4 @@ The WebView sends narrowly named actions and receives plain JSON. Revision ident
 
 Agent protocols and credentials stay in their adapters and native agent configuration. Conversations retain independent processes and background activity. Agent callbacks update state under a lock, then dispatch UI refresh outside that lock. Never block the UI thread while holding a conversation lock.
 
-The optional development mirror relays panel snapshots and actions through a loopback Vite server. The installed frontend is self-contained; using the mirror is an explicit development action.
+The optional Mirror (`RhinoDockMirror`) serves the panel and Extension windows to a browser on a loopback port behind a per-start token, and refuses other origins. The installed frontend is self-contained; using the Mirror is an explicit action.
