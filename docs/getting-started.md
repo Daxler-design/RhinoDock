@@ -4,7 +4,7 @@
 
 Requirements: Rhino 8 using .NET 8 (Windows or macOS).
 
-Build the package from source (see the [README](https://github.com/Daxler-design/RhinoDock/blob/main/README.md#install)), install the `.yak` file with Rhino's Yak CLI or drag it onto Rhino, and restart Rhino. Install only one copy: if you loaded an `.rhp` directly, remove that registration first.
+In Rhino, run `_PackageManager`, search for `rhdock`, and install it. Or build the package from source (see the [README](https://github.com/Daxler-design/RhinoDock/blob/main/README.md#build-from-source)), install the `.yak` file with Rhino's Yak CLI or drag it onto Rhino, and restart Rhino. Install only one copy: if you loaded an `.rhp` directly, remove that registration first.
 
 ## First run
 

@@ -16,7 +16,11 @@ RhinoDock is experimental software for Windows and macOS. See [known limitations
 
 ## Install
 
-Build the Yak package and install it in Rhino. You need the .NET 8 SDK and Node.js 22.
+In Rhino, run `_PackageManager`, search for `rhdock`, and install it.
+
+### Build from source
+
+You need the .NET 8 SDK and Node.js 22.
 
 ```sh
 git clone https://github.com/Daxler-design/RhinoDock.git
@@ -25,10 +29,6 @@ dotnet build rhdock.sln -c Release
 dotnet msbuild tools/package-yak.proj
 yak install .artifacts/yak/<package>.yak
 ```
-
-<!-- Enable after the first `yak push`:
-In Rhino, run `_PackageManager`, search for `rhdock`, and install it.
--->
 
 Restart Rhino and run `RhinoDock`. Then follow [Getting started](docs/getting-started.md).
 
