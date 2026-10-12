@@ -5,6 +5,8 @@ using System.Text.RegularExpressions;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Emit;
+using Microsoft.CodeAnalysis.Text;
 
 namespace rhDock.Core;
 
@@ -14,6 +16,9 @@ public sealed class ScriptCompilerService : IDisposable
 {
     private readonly Dictionary<string, CompiledProject> cache = new(StringComparer.OrdinalIgnoreCase);
     private readonly string[] extraReferences;
+    // RHDOCK_DEBUG=1: unoptimized code with an embedded portable PDB and embedded sources, so an attached debugger can
+    // stop in Script and Extension files. Read per compiler so a test can switch it.
+    private readonly bool debug = Environment.GetEnvironmentVariable("RHDOCK_DEBUG") == "1";
     internal object Gate { get; } = new();
     private bool disposed;
     public IReadOnlyList<string> Messages { get; private set; } = Array.Empty<string>();
@@ -27,50 +32,81 @@ public sealed class ScriptCompilerService : IDisposable
         {
             ObjectDisposedException.ThrowIf(disposed, this);
             projectFolder = Path.GetFullPath(projectFolder);
-            var projectFile = Directory.GetFiles(projectFolder, "*.csproj").FirstOrDefault()
-                ?? throw new FileNotFoundException("No .csproj found in project folder.", projectFolder);
+            var projectFile = FindProjectFile(projectFolder);
             var stamp = GetProjectStamp(projectFolder, projectFile);
             if (cache.TryGetValue(projectFolder, out var previous) && previous.LastWriteUtc == stamp) return previous;
             if (cache.Remove(projectFolder, out previous)) previous.Dispose();
-            var files = Directory.GetFiles(projectFolder, "*.cs", SearchOption.AllDirectories).Where(p => !IsBuildOutput(p)).ToArray();
-            if (files.Length == 0) throw new InvalidOperationException("Project contains no .cs files.");
-            var options = CSharpParseOptions.Default.WithLanguageVersion(LanguageVersion.Latest);
-            var trees = files.Select(p => CSharpSyntaxTree.ParseText(File.ReadAllText(p), options, p)).ToArray();
-            var messages = new List<string>();
-            var paths = BuildBaseReferences();
-            var dependencies = ReadProjectReferences(projectFile, messages, paths).ToArray();
-            foreach (var reference in dependencies) paths.Add(reference.Path);
-            LastReferences = paths.Order(StringComparer.OrdinalIgnoreCase).ToArray();
-            if (!paths.Any(p => Path.GetFileName(p).Equals("Grasshopper.dll", StringComparison.OrdinalIgnoreCase)))
-                messages.Add("Grasshopper.dll not found in host/install references; GH-dependent scripts may not compile.");
-            Messages = messages.ToArray();
-            var compilation = CSharpCompilation.Create($"rhDock.Script.{Guid.NewGuid():N}", trees,
-                paths.Select(p => MetadataReference.CreateFromFile(p)),
-                new CSharpCompilationOptions(Microsoft.CodeAnalysis.OutputKind.DynamicallyLinkedLibrary, optimizationLevel: OptimizationLevel.Release));
-            using var stream = new MemoryStream();
-            var result = compilation.Emit(stream);
-            if (!result.Success) throw new ScriptCompileException(string.Join(Environment.NewLine,
-                result.Diagnostics.Where(d => d.Severity is DiagnosticSeverity.Error or DiagnosticSeverity.Warning)));
-            stream.Position = 0;
-            var context = new ScriptAssemblyLoadContext(paths);
-            try
-            {
-                var assembly = context.LoadFromStream(stream);
-                var candidates = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
-                foreach (var tree in trees)
-                {
-                    var names = tree.GetRoot().DescendantNodes().OfType<ClassDeclarationSyntax>()
-                        .Where(c => c.Members.OfType<MethodDeclarationSyntax>().Any(m => m.Identifier.ValueText == "Run"))
-                        .Select(GetFullTypeName).ToArray();
-                    candidates[Path.GetRelativePath(projectFolder, tree.FilePath).Replace('\\', '/')] = names;
-                    candidates[Path.GetFileName(tree.FilePath)] = names;
-                }
-                var project = new CompiledProject(projectFolder, assembly, context, stamp, candidates);
-                cache[projectFolder] = project;
-                return project;
-            }
-            catch { context.Unload(); throw; }
+            var project = Compile(projectFolder, projectFile, stamp);
+            cache[projectFolder] = project;
+            return project;
         }
+    }
+
+    /// <summary>
+    /// Compiles a new generation without touching the cache, so the caller can keep its current generation until the
+    /// new one is ready. The caller owns and disposes the result.
+    /// </summary>
+    public CompiledProject CompileUncached(string projectFolder)
+    {
+        lock (Gate)
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            projectFolder = Path.GetFullPath(projectFolder);
+            var projectFile = FindProjectFile(projectFolder);
+            return Compile(projectFolder, projectFile, GetProjectStamp(projectFolder, projectFile));
+        }
+    }
+
+    private static string FindProjectFile(string projectFolder) => Directory.GetFiles(projectFolder, "*.csproj").FirstOrDefault()
+        ?? throw new FileNotFoundException("No .csproj found in project folder.", projectFolder);
+
+    private CompiledProject Compile(string projectFolder, string projectFile, DateTime stamp)
+    {
+        var files = Directory.GetFiles(projectFolder, "*.cs", SearchOption.AllDirectories).Where(p => !IsBuildOutput(p)).ToArray();
+        if (files.Length == 0) throw new InvalidOperationException("Project contains no .cs files.");
+        var options = CSharpParseOptions.Default.WithLanguageVersion(LanguageVersion.Latest);
+        // Read bytes, not strings, so the debug PDB checksum matches the file a debugger opens.
+        var trees = files.Select(p =>
+        {
+            using var file = File.OpenRead(p);
+            return CSharpSyntaxTree.ParseText(SourceText.From(file, canBeEmbedded: debug), options, p);
+        }).ToArray();
+        var messages = new List<string>();
+        var paths = BuildBaseReferences();
+        var dependencies = ReadProjectReferences(projectFile, messages, paths).ToArray();
+        foreach (var reference in dependencies) paths.Add(reference.Path);
+        LastReferences = paths.Order(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (!paths.Any(p => Path.GetFileName(p).Equals("Grasshopper.dll", StringComparison.OrdinalIgnoreCase)))
+            messages.Add("Grasshopper.dll not found in host/install references; GH-dependent scripts may not compile.");
+        Messages = messages.ToArray();
+        var compilation = CSharpCompilation.Create($"rhDock.Script.{Guid.NewGuid():N}", trees,
+            paths.Select(p => MetadataReference.CreateFromFile(p)),
+            new CSharpCompilationOptions(Microsoft.CodeAnalysis.OutputKind.DynamicallyLinkedLibrary,
+                optimizationLevel: debug ? OptimizationLevel.Debug : OptimizationLevel.Release));
+        using var stream = new MemoryStream();
+        var result = debug
+            ? compilation.Emit(stream, embeddedTexts: trees.Select(tree => EmbeddedText.FromSource(tree.FilePath, tree.GetText())),
+                options: new EmitOptions(debugInformationFormat: DebugInformationFormat.Embedded))
+            : compilation.Emit(stream);
+        if (!result.Success) throw new ScriptCompileException(string.Join(Environment.NewLine,
+            result.Diagnostics.Where(d => d.Severity is DiagnosticSeverity.Error or DiagnosticSeverity.Warning)));
+        stream.Position = 0;
+        var context = new ScriptAssemblyLoadContext(paths);
+        try
+        {
+            var assembly = context.LoadFromStream(stream);
+            var candidates = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var tree in trees)
+            {
+                var names = tree.GetRoot().DescendantNodes().OfType<ClassDeclarationSyntax>()
+                    .Where(c => c.Members.OfType<MethodDeclarationSyntax>().Any(m => m.Identifier.ValueText == "Run"))
+                    .Select(GetFullTypeName).ToArray();
+                candidates[Path.GetRelativePath(projectFolder, tree.FilePath).Replace('\\', '/')] = names;
+                candidates[Path.GetFileName(tree.FilePath)] = names;
+            }
+            return new CompiledProject(projectFolder, assembly, context, stamp, candidates);
+        }
+        catch { context.Unload(); throw; }
     }
 
     public void Invalidate(string projectFolder)

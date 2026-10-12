@@ -188,7 +188,7 @@ internal static class SingleScriptSessionChecks
                 "Preview Style round-trips in optional v3 settings");
             intact = File.ReadAllText(savedPath);
             var badStyle = new Dictionary<string, SavedScriptState>(scripts, StringComparer.Ordinal)
-            { [otherScript] = otherState with { PreviewStyles = new() { ["y"] = new PreviewStyle("red", 0, null, 140) } } };
+            { [otherScript] = otherState with { PreviewStyles = new() { ["y"] = new PreviewStyle("red", 33, null, 140) } } };
             try { SingleScriptWorkspaceStore.Append(folder,
                 new(DateTime.UtcNow, otherScript, "manual", badStyle)); throw new Exception("accepted invalid Preview Style"); }
             catch (InvalidDataException) { }

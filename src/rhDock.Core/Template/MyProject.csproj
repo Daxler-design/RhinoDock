@@ -4,6 +4,8 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <NuGetAudit>false</NuGetAudit>
+    <!-- rhDock compiles with the Roslyn that Rhino 8 ships: C# 11. -->
+    <LangVersion>11</LangVersion>
   </PropertyGroup>
 
   <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows')) and '$(RhinoAssemblyDir)' == ''">

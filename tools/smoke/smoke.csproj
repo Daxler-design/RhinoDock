@@ -10,5 +10,7 @@
     <ProjectReference Include="../../src/rhDock.Agents/rhDock.Agents.csproj" />
     <Compile Include="../../src/rhDock.Rhino/SnapshotSender.cs" Link="SnapshotSender.cs" />
     <Compile Include="../../src/rhDock.Rhino/AgentHost.cs" Link="AgentHost.cs" />
+    <Compile Include="../../src/rhDock.Rhino/HostLog.cs" Link="HostLog.cs" />
+    <Compile Include="../../src/rhDock.Rhino/ExtensionSlot.cs" Link="ExtensionSlot.cs" />
   </ItemGroup>
 </Project>

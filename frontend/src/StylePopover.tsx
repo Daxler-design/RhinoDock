@@ -78,8 +78,8 @@ export function StylePopover({ title, family, style, onChange, onSample, onClose
       {swatches.map(c => <button key={c} className={style.custom && style.color.toUpperCase() === c ? 'sel' : ''} style={{ background: c }} title={c} aria-label={c} onClick={() => edit({ color: c })}/>)}
     </div>
     {sizes.length > 0 && <div className="style-div"/>}
-    {sizes.includes('weight') && <StyleNumber label={family === 'curve' ? 'Line weight' : 'Edge weight'} value={style.weight} soft={{ min: 1, max: 8, step: 1 }} limits={{ min: 1, max: 32 }} suffix="px" onCommit={weight => edit({ weight })}/>}
-    {sizes.includes('size') && <StyleNumber label="Point size" value={style.size} soft={{ min: 1, max: 12, step: 1 }} limits={{ min: 1, max: 64 }} suffix="px" onCommit={size => edit({ size })}/>}
+    {sizes.includes('weight') && <StyleNumber label={family === 'curve' ? 'Line weight' : 'Edge weight'} value={style.weight} soft={{ min: 0, max: 8, step: 1 }} limits={{ min: 0, max: 32 }} suffix="px" onCommit={weight => edit({ weight })}/>}
+    {sizes.includes('size') && <StyleNumber label="Point size" value={style.size} soft={{ min: 0, max: 12, step: 1 }} limits={{ min: 0, max: 64 }} suffix="px" onCommit={size => edit({ size })}/>}
     {sizes.includes('shading') && <StyleNumber label="Shading" value={style.shading} soft={{ min: 0, max: 100, step: 5 }} limits={{ min: 0, max: 100 }} suffix="%" onCommit={shading => edit({ shading })}/>}
     <div className="style-note">{note}</div>
   </div>;

@@ -34,6 +34,7 @@ public sealed class SingleScriptPanel : Panel, global::Rhino.UI.IPanel
     {
         RhinoApp.WriteLine($"rhDock [{Environment.ProcessId}]: opening panel.");
         web = new();
+        HostLog.Write($"panel opened, inspector {WebInspector.Enable(web)}");
         host = SingleScriptHost.Current;
         snapshots = new(script => web.ExecuteScriptAsync(script), ex =>
         {
@@ -46,6 +47,7 @@ public sealed class SingleScriptPanel : Panel, global::Rhino.UI.IPanel
         web.MessageReceived += OnMessage;
         web.DocumentLoading += (_, _) => { loaded = false; lastSnapshot = null; snapshots.ClearPending(); };
         host.Attach(this);
+        MirrorServer.AttachPanel(Handle);
         using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("rhDock.Frontend.index.html");
         if (stream is null) { Content = new Label { Text = "rhDock frontend is missing. Build frontend assets and rebuild the plugin." }; return; }
         using var reader = new StreamReader(stream);
@@ -188,6 +190,9 @@ public sealed class SingleScriptPanel : Panel, global::Rhino.UI.IPanel
                 if (!loaded) RhinoApp.WriteLine($"rhDock [{Environment.ProcessId}]: panel bridge ready.");
                 loaded = true; Publish(true); return;
             }
+            // Opening a file closes the panel's document and detaches it, but Windows Rhino keeps the panel on screen without
+            // calling PanelShown again; without this, Open repository ran with no panel to show the result.
+            if (!host.IsAttached(this)) { host.Attach(this); WatchForeground(); }
             if (root.TryGetProperty("revision", out var rev) && rev.GetInt32() != host.Revision) return;
             // Ignore late draft/approval actions from a conversation the user has just switched away from.
             if (action?.StartsWith("agent", StringComparison.Ordinal) == true && action != "agentImage" && root.TryGetProperty("viewId", out var view)
@@ -241,7 +246,22 @@ public sealed class SingleScriptPanel : Panel, global::Rhino.UI.IPanel
                     if (AgentHost.Current.Picture(imageId) is { } picture)
                         _ = web.ExecuteScriptAsync($"window.rhDockImage && window.rhDockImage({imageId}, {JsonSerializer.Serialize(picture)});");
                     refresh = false; break;
-                case "clientError": AgentHost.LogClient(root.GetProperty("value").GetString() ?? ""); refresh = false; break;
+                case "clientError": HostLog.Write("panel " + root.GetProperty("value").GetString()); refresh = false; break;
+                case "extOpen":
+                    using (var dialog = new SelectFolderDialog { Title = "Open an Extension Repo" })
+                        if (dialog.ShowDialog(this) == DialogResult.Ok) Extensions.ExtensionHost.Current.OpenRepository(dialog.Directory);
+                    refresh = false; break;
+                case "extNewRepo":
+                    if (ValidName(root.GetProperty("value").GetString()) is not { } repoName) break;
+                    using (var dialog = new SelectFolderDialog { Title = "Choose where to create the Extension Repo" })
+                        if (dialog.ShowDialog(this) == DialogResult.Ok) Extensions.ExtensionHost.Current.NewRepository(Path.Combine(dialog.Directory, repoName));
+                    refresh = false; break;
+                case "extNew": Extensions.ExtensionHost.Current.NewExtension(root.GetProperty("value").GetString() ?? ""); refresh = false; break;
+                case "extEnable": Extensions.ExtensionHost.Current.SetEnabled(Name(), root.GetProperty("value").GetBoolean()); refresh = false; break;
+                case "extStartup": Extensions.ExtensionHost.Current.SetStartup(Name(), root.GetProperty("value").GetBoolean()); refresh = false; break;
+                case "extReload": Extensions.ExtensionHost.Current.Reload(Name()); refresh = false; break;
+                case "extEdit": Extensions.ExtensionHost.Current.Edit(Name()); refresh = false; break;
+                case "extReveal": Extensions.ExtensionHost.Current.Reveal(root.TryGetProperty("name", out var revealName) ? revealName.GetString() : null); refresh = false; break;
                 case "agentCancel": AgentHost.Current.Cancel(); refresh = false; break;
                 case "agentNew": if (host.Session.Repository is { } newIn) AgentHost.Current.NewConversation(newIn); refresh = false; break;
                 case "agentLoad": if (host.Session.Repository is { } loadIn) AgentHost.Current.Load(loadIn, root.GetProperty("value").GetString() ?? ""); refresh = false; break;
@@ -303,15 +323,18 @@ public sealed class SingleScriptPanel : Panel, global::Rhino.UI.IPanel
 
     private void ChooseRepository(bool create, string? name = null)
     {
+        if (create && ValidName(name) is null) return;
         using var dialog = new SelectFolderDialog();
         if (dialog.ShowDialog(this) != DialogResult.Ok) return;
-        if (create)
-        {
-            if (string.IsNullOrWhiteSpace(name) || name is "." or ".." || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
-                || name.Contains('/') || name.Contains('\\')) { ShowError("Enter a valid repository name."); return; }
-            host.New(Path.Combine(dialog.Directory, name));
-        }
+        if (create) host.New(Path.Combine(dialog.Directory, name!));
         else host.Open(dialog.Directory);
+    }
+
+    private string? ValidName(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name) || name is "." or ".." || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
+            || name.Contains('/') || name.Contains('\\')) { ShowError("Enter a valid repository name."); return null; }
+        return name;
     }
 
     private void SetInput(string name, JsonElement raw)
@@ -352,27 +375,23 @@ public sealed class SingleScriptPanel : Panel, global::Rhino.UI.IPanel
     /// <summary>Sends the current state to the panel and mirror; an unchanged state is skipped unless forced (a new page needs it).</summary>
     private void Publish(bool force = false)
     {
-        if (!loaded && mirror is null) return;
+        if (!loaded && mirror is null && !MirrorServer.Running) return;
         var session = host.Session;
         var selected = session.Selected;
         var inputs = selected?.Ports.Where(p => !p.IsOutput).Select(p =>
         {
             var type = PortTypeName.Element(p.TypeName);
-            var kind = p.Access == PortAccess.List && type is "System.Double" or "System.Int32" or "System.String" or "System.Boolean" ? "list"
-                : p.Access == PortAccess.Item && type == "System.Double" ? "number"
-                : p.Access == PortAccess.Item && type == "System.Int32" ? "int"
-                : p.Access == PortAccess.Item && type == "System.String" ? "text"
-                : p.Access == PortAccess.Item && type == "System.Boolean" ? "boolean"
-                : p.Access != PortAccess.Tree && SingleScriptHost.IsColor(type) ? "color"
-                : GeometryVocabulary.CanPick(type) ? "pick" : "unsupported";
+            var kind = SingleScriptHost.PortKind(p);
             var value = session.Inputs.GetValueOrDefault(p.Name);
             var picked = kind == "pick" ? host.Picked(p.Name) : null;
             var family = kind == "pick" ? GeometryVocabulary.FamilyOf(type) : null;
             return new { name = p.Name, type = p.TypeName, access = p.Access.ToString(), optional = p.IsOptional,
-                tooltip = p.Tooltip, kind, value = kind == "pick" ? null : FormatInput(value),
+                tooltip = p.Tooltip, kind, value = kind == "pick" ? null
+                    : kind == "extension" ? (value as IFormattable)?.ToString(null, CultureInfo.InvariantCulture) ?? value?.ToString() : FormatInput(value),
                 picked = picked?.Label, items = picked?.Items.Take(200).Select(item => new { label = item.Label, visible = item.Visible }).ToArray(),
                 count = picked?.Items.Length ?? 0, family, preview = kind == "pick" ? (object?)new { visible = host.PreviewVisible(p.Name), style = StyleSnapshot(p.Name, family, true) } : null,
-                range = host.NumericRanges.GetValueOrDefault(p.Name), boolStyle = host.BooleanStyles.GetValueOrDefault(p.Name) ?? "press" };
+                range = host.NumericRanges.GetValueOrDefault(p.Name), boolStyle = host.BooleanStyles.GetValueOrDefault(p.Name) ?? "press",
+                editor = kind == "extension" ? Extensions.ExtensionHost.EditorFor(type) : null };
         }).ToArray() ?? [];
         var outputs = session.HasCurrentOutputs ? session.Outputs.Select(pair =>
         {
@@ -403,11 +422,13 @@ public sealed class SingleScriptPanel : Panel, global::Rhino.UI.IPanel
             historical = host.HistoricalRun, notice = host.RestoreNotice,
             picking = host.ActivePick is { } pick ? new { name = pick.Name, mode = pick.Mode, index = pick.Index } : null,
             agent = AgentHost.Current.Snapshot(),
+            extensions = Extensions.ExtensionHost.Current.Snapshot(),
             solve = host.Solve is { } solve ? new { playing = solve.Playing, frame = solve.Frame, done = solve.Done, stalled = solve.Stalled,
                 rate = solve.Rate, fps = solve.FramesPerSecond, held = solve.Held } : null }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
         if (!force && snapshot == lastSnapshot) return;
         lastSnapshot = snapshot;
         mirror?.Publish(snapshot);
+        MirrorServer.PublishPanel(snapshot);
         if (loaded) _ = snapshots.Send("window.rhDockSnapshot && window.rhDockSnapshot(" + snapshot + ");");
     }
 

@@ -17,12 +17,13 @@ export function image(id: number): Promise<string> {
   return url;
 }
 
-export const mirrorMode = import.meta.env.DEV && new URLSearchParams(window.location.search).has('mirror');
+// The rhDock Mirror in Rhino and the Vite development relay both serve the panel with ?mirror=1 and the same endpoints.
+export const mirrorMode = !window.eto && /[?&]mirror(=|&|$)/.test(window.location?.search ?? '');
 
 export function connect(receive: (snapshot: Snapshot) => void, disconnected: () => void): () => void {
   let readyTimer: number | undefined;
   window.rhDockSnapshot = snapshot => { window.clearInterval(readyTimer); receive(snapshot); };
-  if (window.eto || !import.meta.env.DEV) {
+  if (!mirrorMode && (window.eto || !import.meta.env.DEV)) {
     // Eto may inject its bridge after React mounts. Retry until the host's first snapshot acknowledges readiness.
     const ready = () => window.eto?.postMessage(JSON.stringify({ action: 'ready' }));
     readyTimer = window.setInterval(ready, 100);
@@ -35,7 +36,7 @@ export function connect(receive: (snapshot: Snapshot) => void, disconnected: () 
       if (!active || polling) return;
       polling = true;
       try {
-        const response = await fetch('/__rhdock/mirror/state', { cache: 'no-store' });
+        const response = await fetch('__rhdock/mirror/state', { cache: 'no-store' });
         const state = await response.json() as { connected: boolean; snapshot?: Snapshot };
         if (!active) return;
         if (response.ok && state.connected && state.snapshot) receive(state.snapshot);
@@ -52,7 +53,7 @@ export function connect(receive: (snapshot: Snapshot) => void, disconnected: () 
 
 export function send(message: Action) {
   if (window.eto) window.eto.postMessage(JSON.stringify(message));
-  else if (mirrorMode) void fetch('/__rhdock/mirror/action', {
+  else if (mirrorMode) void fetch('__rhdock/mirror/action', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(message),
   }).catch(() => {});
   else if (import.meta.env.DEV && message.action === 'agentImage') window.setTimeout(() => window.rhDockImage?.(Number(message.value), mockImage(Number(message.value))), 50);

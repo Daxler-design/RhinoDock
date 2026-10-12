@@ -30,6 +30,11 @@ export const mock: Snapshot = {
     { name: 'Areas', type: 'Double[]', count: 24, summary: '24 values', values: ['1.24', '1.68', '1.52', '1.74'], preview: false, visible: false, bake: false },
   ], log: ['Run completed in 42 ms'],
   agent: undefined as Agent | undefined,
+  extensions: { repository: '~/Projects/rhdock-extensions', items: [
+    { name: 'SunStudy', enabled: true, startup: true, generation: 3, leaked: 0 },
+    { name: 'MyExtension', enabled: true, startup: false, generation: 1, leaked: 0, error: "MyExtension.cs(12,9): error CS0103: The name 'vew' does not exist in the current context" },
+    { name: 'SunStudy', enabled: false, startup: true, generation: 0, leaked: 0 },
+  ] },
 };
 
 const item = { files: [] as string[], chips: [] as string[], images: [] as number[], checkpoint: false };

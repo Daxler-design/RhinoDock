@@ -14,11 +14,12 @@ One .NET 8 C# repository for Rhino 8 Scripts loaded by rhDock; it may contain se
 
 ## Script contract
 
-- rhDock compiles repository `.cs` files with Roslyn and reads DLL `<Reference>` entries with `HintPath` from `MyProject.csproj`. It does not run MSBuild, restore NuGet, or read the project's nullable setting. Use explicit `using` directives and `#nullable enable`.
+- rhDock compiles repository `.cs` files with Roslyn and reads DLL `<Reference>` entries with `HintPath` from `MyProject.csproj`. It does not run MSBuild, restore NuGet, or read the project's nullable setting. Use explicit `using` directives and `#nullable enable`. Write C# 11, the version Rhino 8's compiler supports: no collection expressions (`[]`, `[a, b]`) or primary constructors on classes. The `.csproj` pins `LangVersion` 11 so `dotnet build` reports the same errors.
 - A Script is a public class in `Components/` with a public instance `Run(...)`. Optional `public const string` fields: `Name` (panel label), `Category` (tag/list ordering), and `Description`.
 - Plain parameters are inputs; `ref`/`out` are outputs. Default values make inputs optional; put optional parameters last. Lists/arrays pass whole in one call, without host iteration.
 - Panel inputs support `int`, `double`, `string`, `bool`, and their lists/arrays; `System.Drawing.Color` and `Rhino.Display.Color4f` inputs use a color picker and support single values or lists. Geometry inputs support `GeometryBase` and its public subclasses, plus `Point3d`; they pick linked Rhino objects and update when those objects change.
 - `ComponentIndex` inputs pick Sub-object vertices, edges, or faces using Ctrl/Cmd+Shift-click or the prompt. They carry type/index only; obtain topology from separately picked geometry and validate indices.
+- An input type the panel cannot edit may get an Edit button from an enabled rhDock Extension that registered an editor for it. Declare plain .NET or RhinoCommon types (for example `DateTime`); never reference Extension code.
 - Geometry outputs support Preview/Bake; primitive outputs support tables. String output `Info` appears in the Console. Mesh vertex colors display when Preview color is Default.
 
 ## Execution
@@ -31,7 +32,7 @@ One .NET 8 C# repository for Rhino 8 Scripts loaded by rhDock; it may contain se
 
 - Saving source in an open repository reloads Scripts and clears stale results; unsaved typing is not observed. Busy Rhino can delay compilation and saving. Read errors and Info in the Console.
 - `.rhdock/workspace.json` stores selected Script, supported inputs/picks, display settings, and latest Run Records. Script keys are file paths; moving/renaming a Script starts without its saved settings. History keeps 16 complete revisions, not 16 Runs; unchanged Run Records can repeat.
-- Panel `PID: <number>` identifies Rhino. Revision `pid` identifies the saver; `lastRun.pid` identifies the evaluator. Missing/null PID means unknown. Match PID with UTC because PIDs can be reused. Unsaved documents need no path.
+- From 0.2.21, panel `PID: <number>` identifies Rhino. Revision `pid` identifies the saver; `lastRun.pid` identifies the evaluator. Missing/null PID means unknown. Match PID with UTC because PIDs can be reused. Unsaved documents need no path.
 - For debugging, search all revisions for the target Script and `lastRun.pid`; choose the newest matching `lastRun.utc`, not revision save time. Ask which panel PID if unclear. Hosts share the file without merging; final save controls restore, overlapping saves can lose revisions, and history can evict evidence.
 - Read `lastRun.status`, `error`, `diagnostics`, `inputs`, `picks`, and `outputs` together. Compile details are in `error`; saved text is bounded. Check the live Console for more detail.
 - Restored records are historical. Manual source reload does not prove execution: validate edited code with a fresh Run. Solvers record the latest Frame on stop/pause/completion, not every Frame. JSON does not prove live Preview/Bake or responsiveness; never edit it to simulate validation.

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { Bot, ChevronDown, ChevronRight, CircleHelp, Eye, EyeOff, FileCode2, FolderOpen, Play, Plus, Search, Settings2, Terminal, Upload, Zap } from 'lucide-react';
+import { Bot, ChevronDown, ChevronRight, CircleHelp, Eye, EyeOff, FileCode2, FolderOpen, Play, Plus, Puzzle, Search, Settings2, Terminal, Upload, Zap } from 'lucide-react';
 import { AgentHeader, AgentView } from './Agent';
 import { connect, mirrorMode, send } from './bridge';
+import { ExtensionsView } from './Extensions';
 import { fitRange, inside, NumberField, RangeRow, recenter } from './NumberField';
 import { ColorInput, PickButton, PickDetails } from './PickInput';
 import { SolveBar } from './SolveBar';
@@ -17,7 +18,7 @@ function invalidNumber(port: Port, value: string) { return !!value.trim() && (po
 
 export default function App() {
   const [snap, setSnap] = useState<Snapshot>();
-  const [tab, setTab] = useState<'script' | 'agent'>('script');
+  const [tab, setTab] = useState<'script' | 'agent' | 'extensions'>('script');
   const [conversations, setConversations] = useState(false);
   const [palette, setPalette] = useState(false);
   const [menu, setMenu] = useState(false);
@@ -47,7 +48,13 @@ export default function App() {
   useEffect(() => {
     if (tab === 'agent' && snap?.repository && agent && (agent.status === 'idle' || agent.repository !== snap.repository)) send({ action: 'agentConnect' });
   }, [tab, snap?.repository, agent?.status, agent?.repository]);
-  const agentAttention = tab === 'script' && (agent?.status === 'working' || !!agent?.permission || !!agent?.question);
+  const agentAttention = tab !== 'agent' && (agent?.status === 'working' || !!agent?.permission || !!agent?.question);
+  // Unread: conversations that finished or need input, plus the current one when it finished while the Script tab was shown.
+  const [finishedAway, setFinishedAway] = useState(false);
+  const wasWorking = useRef(false);
+  useEffect(() => { const working = agent?.status === 'working'; if (wasWorking.current && !working && tab !== 'agent') setFinishedAway(true); wasWorking.current = working; }, [agent?.status]);
+  useEffect(() => { if (tab === 'agent') setFinishedAway(false); }, [tab]);
+  const unread = (agent?.agents?.flatMap(a => a.activities ?? []).filter(a => a === 'done' || a === 'input').length ?? 0) + (finishedAway ? 1 : 0);
   // The Script tab says when the agent changed the active Script's file; dismissed per change.
   const agentEdit = agent?.changes?.find(c => c.path === snap?.selected);
   const agentEditKey = agentEdit ? `${agentEdit.path}:${agentEdit.added}:${agentEdit.removed}` : undefined;
@@ -90,7 +97,7 @@ export default function App() {
     holdDone.current = false;
     if (snap?.inputs.find(p => p.name === name)?.value === 'true') return;
     setHolding(name);
-    holdTimer.current = setTimeout(() => { holdDone.current = true; setHolding(undefined); act({ action: 'input', name, value: true }); }, 1000);
+    holdTimer.current = setTimeout(() => { holdDone.current = true; setHolding(undefined); act({ action: 'input', name, value: true }); }, 400);
   };
   const endHold = (name: string, cancelled = false) => {
     clearTimeout(holdTimer.current); setHolding(undefined);
@@ -103,22 +110,24 @@ export default function App() {
   return <div className="rd">
     <header className="hd">
       <div className="hd-top">
-        <div className="brand"><span className="brand-mark">r</span>rhDock</div><span className="sep">/</span>
-        <button className="repo" onClick={() => setMenu(!menu)} title={snap?.repository}><span className="repo-name">{snap?.repository?.split(/[\\/]/).pop() ?? 'No repository'}</span><ChevronDown size={12}/></button>
+        <div className="brand"><span className="brand-mark">r</span>rhDock</div>
+        {tab !== 'extensions' && <><span className="sep">/</span><button className="repo" onClick={() => setMenu(!menu)} title={snap?.repository}><span className="repo-name">{snap?.repository?.split(/[\\/]/).pop() ?? 'No repository'}</span><ChevronDown size={12}/></button></>}
         <span className="grow"/>{snap?.pid != null && <span className="watch">PID: {snap.pid}</span>}<span className="watch source"><span className="live"/> {mirrorMode ? snap ? 'Live Rhino' : 'Waiting for Rhino' : import.meta.env.DEV && !window.eto ? 'Preview sample' : 'Local'}</span>
         <div className="tabs" role="tablist" aria-label="Panel">
           <button role="tab" aria-selected={tab === 'script'} title="Script" onClick={() => setTab('script')}><FileCode2 size={13}/><span className="tab-label">Script</span></button>
-          <button role="tab" aria-selected={tab === 'agent'} title="Agent" onClick={() => setTab('agent')}>{agentAttention ? <span className={`tab-dot ${agent?.permission || agent?.question ? 'warn' : ''}`}/> : <Bot size={13}/>}<span className="tab-label">Agent</span></button>
+          <button role="tab" aria-selected={tab === 'agent'} title="Agent" onClick={() => setTab('agent')}>{agentAttention ? <span className={`tab-dot ${agent?.permission || agent?.question ? 'warn' : ''}`}/> : <Bot size={13}/>}<span className="tab-label">Agent</span>{unread > 0 && <span className="tab-badge" aria-label={`${unread} unread`}>{unread > 99 ? '99+' : unread}</span>}</button>
+          <button role="tab" aria-selected={tab === 'extensions'} title="Extensions" onClick={() => setTab('extensions')}>{snap?.extensions?.items.some(i => i.enabled && (i.error || i.leaked)) ? <span className="tab-dot warn"/> : <Puzzle size={13}/>}<span className="tab-label">Extensions</span></button>
         </div>
       </div>
-      {tab === 'agent' ? <AgentHeader agent={agent} send={send} openList={() => setConversations(true)}/> :
+      {tab === 'agent' ? <AgentHeader agent={agent} send={send} openList={() => setConversations(true)}/> : tab === 'extensions' ? null :
       <button className={`script-btn ${!selected ? 'none' : ''}`} onClick={() => { setPalette(true); setHighlight(0); }} disabled={!snap?.scripts.length}>
         <FileCode2 size={14} className="file-ic"/><span className="script-name">{selected?.name ?? 'Select a Script'}</span>{selected?.category && <Badge variant="secondary" className="flex-none">#{selected.category}</Badge>}
         <span className="script-path">{selected?.path}</span><ChevronDown size={13} className="ud"/>
       </button>}
     </header>
     {snap && <AgentView snap={snap} send={send} listOpen={conversations} closeList={() => setConversations(false)} hidden={tab !== 'agent'}/>}
-    <main className="insp" ref={inspector} hidden={tab === 'agent'}>
+    {snap && <ExtensionsView extensions={snap.extensions} send={send} hidden={tab !== 'extensions'}/>}
+    <main className="insp" ref={inspector} hidden={tab !== 'script'}>
       {!snap?.repository ? <div className="empty"><FolderOpen size={30}/><h2>Open a repository</h2><p>Choose a C# repository to discover its Scripts and continue your Workspace.</p><button className="btn primary" onClick={() => act({ action: 'open' })}><FolderOpen size={14}/> Open repository</button><button className="btn secondary" onClick={() => setCreating(true)}><Plus size={14}/> New repository</button></div> : <>
         {snap.notice && <div className="banner">{snap.notice}</div>}
         {agentEdit && agentEditKey !== dismissedEdit && <div className="banner agent-edit"><span className="grow">The agent changed <b>{agentEdit.path.split('/').pop()}</b> (+{agentEdit.added} −{agentEdit.removed}); rhDock reloaded it.</span><button className="link-btn" onClick={() => setTab('agent')}>Review</button><button className="icon-btn sm" aria-label="Dismiss" onClick={() => setDismissedEdit(agentEditKey)}>×</button></div>}
@@ -127,8 +136,9 @@ export default function App() {
             <div className="in-main"><span className="in-name" title={p.name}>{!p.optional && <span className="req-dot"/>}<span className="truncate">{p.name}</span></span>
               <div className="in-ctl">{p.kind === 'pick' ? <PickButton port={p} picking={snap.picking} act={act}/>
               : p.kind === 'boolean' ? p.boolStyle === 'switch' ? <button className="bool-toggle" aria-pressed={p.value === 'true'} onClick={() => act({ action: 'input', name: p.name, value: p.value !== 'true' })}><span className={`switch ${p.value === 'true' ? 'on' : ''}`}><span className="knob"/></span><span>{p.value === 'true' ? 'True' : 'False'}</span></button>
-              : <button className={`press ${p.value === 'true' ? 'locked' : ''} ${holding === p.name ? 'holding' : ''}`} aria-pressed={p.value === 'true'} title="Press to Run once · hold to lock" onPointerDown={e => { if (e.button === 0) { e.currentTarget.setPointerCapture(e.pointerId); startHold(p.name); } }} onPointerUp={() => endHold(p.name)} onPointerLeave={() => { if (holding === p.name) endHold(p.name, true); }} onPointerCancel={() => endHold(p.name, true)} onKeyDown={e => { if (e.key === ' ') { e.preventDefault(); if (!e.repeat) startHold(p.name); } else if (e.key === 'Enter') { e.preventDefault(); if (!e.repeat) p.value === 'true' ? act({ action: 'input', name: p.name, value: false }) : act({ action: 'pulse', name: p.name }); } }} onKeyUp={e => { if (e.key === ' ') { e.preventDefault(); endHold(p.name); } }} onBlur={() => { if (holding === p.name) endHold(p.name, true); }}><span className="hold-fill"/><Zap size={13}/><span>{holding === p.name ? 'Keep holding…' : p.value === 'true' ? 'Locked' : 'Press'}</span></button>
+              : <button className={`press ${p.value === 'true' ? 'locked' : ''} ${holding === p.name ? 'holding' : ''}`} aria-pressed={p.value === 'true'} title={p.value === 'true' ? 'Press to set False' : 'Press to Run once with True · hold to set True'} onPointerDown={e => { if (e.button === 0) { e.currentTarget.setPointerCapture(e.pointerId); startHold(p.name); } }} onPointerUp={() => endHold(p.name)} onPointerLeave={() => { if (holding === p.name) endHold(p.name, true); }} onPointerCancel={() => endHold(p.name, true)} onKeyDown={e => { if (e.key === ' ') { e.preventDefault(); if (!e.repeat) startHold(p.name); } else if (e.key === 'Enter') { e.preventDefault(); if (!e.repeat) p.value === 'true' ? act({ action: 'input', name: p.name, value: false }) : act({ action: 'pulse', name: p.name }); } }} onKeyUp={e => { if (e.key === ' ') { e.preventDefault(); endHold(p.name); } }} onBlur={() => { if (holding === p.name) endHold(p.name, true); }}><span className="hold-fill"/><Zap size={13}/><span>{p.value === 'true' ? 'True' : 'False'}</span></button>
               : p.kind === 'color' ? <ColorInput port={p} picking={snap.picking} act={act}/>
+              : p.kind === 'extension' ? <button className="pick" title={`Edit with the ${p.editor} Extension`} onClick={() => act({ action: 'extEdit', name: p.name })}><Puzzle size={13}/><span className="truncate">{p.value ?? (p.optional ? 'Optional' : 'Required')}</span><span className="grow"/><span className="muted">{p.editor}</span></button>
               : p.kind === 'unsupported' ? <span className="muted">Unsupported input · {shortType(p.type)}</span>
               : p.kind === 'number' || p.kind === 'int' ? <NumberField label={p.name} text={draft[p.name] ?? p.value ?? ''} range={rangeOf(p)} int={p.kind === 'int'} invalid={invalidNumber(p, draft[p.name] ?? p.value ?? '')} placeholder={p.optional ? 'Optional' : 'Required'}
                   onText={value => setDraft(old => ({ ...old, [p.name]: value }))} onBlur={() => commit(p)} onScrub={value => { act({ action: 'input', name: p.name, value }); setDraft(old => { const next = { ...old }; delete next[p.name]; return next; }); }}/>
@@ -153,7 +163,7 @@ export default function App() {
         </section>
       </>}
     </main>
-    {tab === 'agent' ? null : snap?.solve ? <SolveBar snap={snap} solve={snap.solve} act={act} openConsole={() => { setConsoleOpen(true); inspector.current?.scrollTo({ top: inspector.current.scrollHeight, behavior: 'smooth' }); }}/> : <footer className="rb"><button className={`status st-${snap?.status ?? 'ready'}`} onClick={() => { setConsoleOpen(true); inspector.current?.scrollTo({ top: inspector.current.scrollHeight, behavior: 'smooth' }); }}><span className="st-dot"/><span className="st-label">{snap?.status ? snap.status[0].toUpperCase() + snap.status.slice(1) : 'Ready'}</span></button><button className="auto" aria-pressed={!!snap?.auto} onClick={() => act({ action: 'auto', value: !snap?.auto })}><span className={`switch ${snap?.auto ? 'on' : ''}`}><span className="knob"/></span>Auto</button><button className="run" disabled={!snap?.selected || snap.status === 'running' || !!snap.picking} onClick={run}><Play size={13} fill="currentColor"/>Run</button></footer>}
+    {tab !== 'script' ? null : snap?.solve ? <SolveBar snap={snap} solve={snap.solve} act={act} openConsole={() => { setConsoleOpen(true); inspector.current?.scrollTo({ top: inspector.current.scrollHeight, behavior: 'smooth' }); }}/> : <footer className="rb"><button className={`status st-${snap?.status ?? 'ready'}`} onClick={() => { setConsoleOpen(true); inspector.current?.scrollTo({ top: inspector.current.scrollHeight, behavior: 'smooth' }); }}><span className="st-dot"/><span className="st-label">{snap?.status ? snap.status[0].toUpperCase() + snap.status.slice(1) : 'Ready'}</span></button><button className="auto" aria-pressed={!!snap?.auto} onClick={() => act({ action: 'auto', value: !snap?.auto })}><span className={`switch ${snap?.auto ? 'on' : ''}`}><span className="knob"/></span>Auto</button><button className="run" disabled={!snap?.selected || snap.status === 'running' || !!snap.picking} onClick={run}><Play size={13} fill="currentColor"/>Run</button></footer>}
     {menu && <><div className="scrim clear" onClick={() => setMenu(false)}/><div className="menu"><div className="menu-path">{snap?.repository ?? 'No repository'}</div><button onClick={() => { setMenu(false); act({ action: 'open' }); }}><FolderOpen size={14}/>Open repository</button><button onClick={() => { setMenu(false); setCreating(true); }}><Plus size={14}/>New repository</button><button disabled={!snap?.selected} onClick={() => { setMenu(false); act({ action: 'export' }); }}><Upload size={14}/>Export Workspace</button></div></>}
     {creating && <><div className="scrim" onClick={() => setCreating(false)}/><div className="pal create-form"><h2>New repository</h2><label>Repository name<input autoFocus value={newName} onChange={e => setNewName(e.target.value)} placeholder="My Project" onKeyDown={e => { if (e.key === 'Escape') setCreating(false); }}/></label><p>Choose a parent folder in the next dialog. The starter will be created in a new folder with this name.</p><div className="form-actions"><button className="btn secondary" onClick={() => setCreating(false)}>Cancel</button><button className="btn primary" disabled={!newName.trim() || /[\\/:*?"<>|]/.test(newName)} onClick={() => { act({ action: 'new', value: newName.trim() }); setCreating(false); }}>Choose location</button></div></div></>}
     {palette && <><div className="scrim" onClick={() => setPalette(false)}/><div className="pal"><div className="pal-search"><Search size={15}/><input ref={paletteInput} value={query} onChange={e => { setQuery(e.target.value); setHighlight(0); }} onKeyDown={paletteKey} placeholder="Search Scripts by name, #category, or path"/><kbd>Esc</kbd></div><div className="pal-group">Scripts · {scripts.length}</div><div className="pal-list">{scripts.map((s, i) => <button className={i === highlight ? 'hi' : ''} onMouseEnter={() => setHighlight(i)} onClick={() => select(s.path)} key={s.path}><FileCode2 size={14}/><span><span className="pal-name"><strong>{s.name}</strong>{s.category && <Badge variant="secondary">#{s.category}</Badge>}</span><small>{s.path}</small></span>{s.path === snap?.selected && <span className="current">Current</span>}</button>)}{!scripts.length && <div className="pal-empty">No matching Scripts</div>}</div><div className="pal-foot">↑↓ Navigate · Enter Select · Esc Close</div></div></>}

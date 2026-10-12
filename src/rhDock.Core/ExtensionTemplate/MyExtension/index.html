@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>My Extension</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #16181d; color: #c9ccd3; font: 13px system-ui, sans-serif; }
+  main { padding: 16px; display: grid; gap: 12px; justify-items: start; }
+  button { font: inherit; padding: 4px 10px; }
+</style>
+<script src="rhdock.js"></script>
+</head>
+<body>
+<main>
+  <div id="selection">Waiting for Rhino…</div>
+  <button id="hello">Say hello</button>
+</main>
+<script>
+rhdock.on('selection', count => {
+  document.getElementById('selection').textContent = `${count} object${count === 1 ? '' : 's'} selected in Rhino`;
+});
+document.getElementById('hello').onclick = () => rhdock.send('hello');
+rhdock.ready();
+</script>
+</body>
+</html>

@@ -49,7 +49,22 @@ public sealed class CompiledProject : IDisposable
         };
     }
 
-    public void Dispose() => loadContext.Unload();
+    /// <summary>A weak handle to this generation's load context, to verify that it is collected after <see cref="Dispose"/>.</summary>
+    public WeakReference LoadContextReference() => new(loadContext);
+
+    public void Dispose()
+    {
+        loadContext.Unload();
+        ClearJsonCache();
+    }
+
+    // System.Text.Json caches type metadata process-wide; a generation's types serialized by the host (Extension Post)
+    // or by its own code would keep its load context alive. This is the internal handler .NET hot reload calls.
+    private static readonly MethodInfo? JsonClearCache = typeof(System.Text.Json.JsonSerializer).Assembly
+        .GetType("System.Text.Json.JsonSerializerOptionsUpdateHandler")
+        ?.GetMethod("ClearCache", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+
+    private static void ClearJsonCache() => JsonClearCache?.Invoke(null, new object?[] { null });
 }
 
 public sealed class ScriptCompileException : Exception

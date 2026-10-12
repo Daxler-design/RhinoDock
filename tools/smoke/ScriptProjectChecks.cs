@@ -85,6 +85,35 @@ internal static class ScriptProjectChecks
                 "Host-provided reference does not produce an unresolved HintPath warning");
         }
         finally { Directory.Delete(folder, true); }
+        CheckDebugSymbols();
+    }
+
+    // With RHDOCK_DEBUG=1 the compiled generation carries an embedded PDB, so stack traces (and debuggers) see source lines.
+    private static void CheckDebugSymbols()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "rhdock-debug-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        var previous = Environment.GetEnvironmentVariable("RHDOCK_DEBUG");
+        try
+        {
+            File.WriteAllText(Path.Combine(folder, "Fixture.csproj"), "<Project />");
+            File.WriteAllText(Path.Combine(folder, "Thrower.cs"), "public static class Thrower {\n    public static void Fail() =>\n        throw new System.Exception(\"line 3\");\n}\n");
+            Environment.SetEnvironmentVariable("RHDOCK_DEBUG", "1");
+            using var compiler = new ScriptCompilerService();
+            using var project = compiler.CompileUncached(folder);
+            try { project.Assembly.GetType("Thrower")!.GetMethod("Fail")!.Invoke(null, null); }
+            catch (System.Reflection.TargetInvocationException ex)
+            {
+                Require(ex.InnerException?.StackTrace?.Contains("Thrower.cs:line 3") == true, "RHDOCK_DEBUG compiles with source line information");
+                return;
+            }
+            Require(false, "RHDOCK_DEBUG fixture throws");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("RHDOCK_DEBUG", previous);
+            Directory.Delete(folder, true);
+        }
     }
     private static void Require(bool condition, string label)
     { if (!condition) throw new Exception("FAIL: " + label); Console.WriteLine("PASS: " + label); }

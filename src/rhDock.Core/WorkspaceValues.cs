@@ -92,5 +92,5 @@ public static class AtomicJson
 public sealed record PreviewStyle(string? Color, int? Weight, int? Size, int? Shading)
 {
     public bool IsValid => (Color is null || System.Text.RegularExpressions.Regex.IsMatch(Color, "^#[0-9A-Fa-f]{6}$"))
-        && Weight is null or (>= 1 and <= 32) && Size is null or (>= 1 and <= 64) && Shading is null or (>= 0 and <= 100);
+        && Weight is null or (>= 0 and <= 32) && Size is null or (>= 0 and <= 64) && Shading is null or (>= 0 and <= 100);
 }

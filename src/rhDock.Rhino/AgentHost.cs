@@ -78,10 +78,8 @@ internal sealed partial class AgentHost
     }
 
     // ponytail: every snapshot carries the whole bounded conversation; send deltas if long conversations make the panel lag.
-    private const int MaxItems = 200, MaxText = 12000, MaxDetail = 4000, MaxLogLine = 4000, MaxPictures = 48, MaxConversations = 50, MaxAttachments = 8,
+    private const int MaxItems = 200, MaxText = 12000, MaxDetail = 4000, MaxPictures = 48, MaxConversations = 50, MaxAttachments = 8,
         MaxImageBase64 = 8 * 1024 * 1024, MaxFiles = 3000, MaxCheckpoints = 10;
-    private static readonly string LogPath = Path.Combine(Path.GetTempPath(), "rhdock-agent.log");
-    private static readonly object LogGate = new();
     private readonly object gate = new();
     private readonly SemaphoreSlim work = new(1, 1);
     private readonly List<Item> items = [];
@@ -172,7 +170,7 @@ internal sealed partial class AgentHost
                 status, error, agent = info is null ? null : $"{info.Name} {info.Version}".Trim(), executable = info?.Executable, userPath = UserPath, repository = repositoryKey ?? sessionCwd, sessionId, title = ShownTitle(),
                 usage, turn = new { input = turn?.Input, output = turn?.Output, cacheRead = turn?.CacheRead, cacheWrite = turn?.CacheWrite, reasoning = turn?.Reasoning, total = turn?.Total, elapsedMs },
                 favorites = favorites.Where(f => f.StartsWith(agentId + ":", StringComparison.Ordinal)).Select(f => f[(agentId.Length + 1)..]).ToArray(),
-                log = LogPath, mode = Harnesses.Get(agentId).Features.Permissions ? mode : "all", images = catalog.Images, canLoad = catalog.LoadsConversations, agentId, agentName = Harnesses.Get(agentId).Name, features = Harnesses.Get(agentId).Features,
+                log = HostLog.Path, mode = Harnesses.Get(agentId).Features.Permissions ? mode : "all", images = catalog.Images, canLoad = catalog.LoadsConversations, agentId, agentName = Harnesses.Get(agentId).Name, features = Harnesses.Get(agentId).Features,
                 agents = Harnesses.All.Select(h => new { id = h.Id, name = h.Name, installed = installed.GetValueOrDefault(h.Id) is not null, install = h.Install, docs = h.Docs,
                     activities = views.Where(v => v.AgentId == h.Id && v.Repository == (repositoryKey ?? sessionCwd) && v.Activity is not null).Select(v => v.Activity).ToArray() }).ToArray(),
                 plan = plan.Select(p => new { status = p.Status, content = p.Content }).ToArray(),
@@ -792,7 +790,7 @@ internal sealed partial class AgentHost
             {
                 case Exited exited:
                     status = "error";
-                    error = $"{exited.Message} Details are in {LogPath}.";
+                    error = $"{exited.Message} Details are in {HostLog.Path}.";
                     queue.Clear();
                     permissions.Clear();
                     questions.Clear();
@@ -917,16 +915,5 @@ internal sealed partial class AgentHost
         });
     }
 
-    // Pasted images and attached PDFs travel as base64 lines of several MB; the log keeps the start of each line.
-    private static void Log(string text)
-    {
-        if (text.Length > MaxLogLine) text = text[..MaxLogLine] + $"… [{text.Length} chars]";
-        lock (LogGate) File.AppendAllText(LogPath, text + "\n");
-    }
-
-    /// <summary>Records an error the panel's page reported, so one log file shows both sides.</summary>
-    public static void LogClient(string text) => Log("panel " + text);
-
-    /// <summary>Records an exception that is about to end Rhino, which otherwise leaves no trace.</summary>
-    public static void LogFatal(object error) => Log("fatal " + error);
+    private static void Log(string text) => HostLog.Write(text);
 }

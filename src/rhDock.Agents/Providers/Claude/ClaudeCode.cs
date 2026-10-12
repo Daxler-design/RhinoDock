@@ -34,7 +34,7 @@ public sealed partial class ClaudeCode(string executable, Action<string> log) : 
     private sealed record Request(string ToolName, JsonElement Input, JsonElement Suggestions);
     private sealed record ModelInfo(string Value, string Name, string[] Efforts);
 
-    // A conversation's choices and rewind state. Model and mode change on the running CLI; effort and a rewind need a new one.
+    // A conversation's choices and rewind state. Model, effort, and mode change on the running CLI; a rewind needs a new one.
     private sealed class Conversation
     {
         public Choice Choice = new(null, null);
@@ -221,8 +221,11 @@ public sealed partial class ClaudeCode(string executable, Action<string> log) : 
             choice = optionId switch { "model" => choice with { Model = value }, "effort" => choice with { Effort = value == "default" ? null : value }, _ => choice };
             if (conversation is null) next = choice; else conversation.Choice = choice;
         }
-        // A model change applies to the running CLI; an effort change starts a new one at the next prompt.
-        if (optionId == "model" && CurrentFor(sessionId) is { } current) await Control(current, new JsonObject { ["subtype"] = "set_model", ["model"] = value == "default" ? null : value });
+        // Both apply to the running CLI; Claude Code takes effort as a flag setting, so no restart is needed.
+        if (CurrentFor(sessionId) is not { } current) return;
+        var setting = value == "default" ? null : value;
+        if (optionId == "model") await Control(current, new JsonObject { ["subtype"] = "set_model", ["model"] = setting });
+        else if (optionId == "effort") await Control(current, new JsonObject { ["subtype"] = "apply_flag_settings", ["settings"] = new JsonObject { ["effortLevel"] = setting } });
     }
 
     public void Dispose()
@@ -238,7 +241,7 @@ public sealed partial class ClaudeCode(string executable, Action<string> log) : 
         lock (gate) return live is { } l && (sessionId is null || l.SessionId == sessionId) ? l : null;
     }
 
-    // The CLI for this conversation with its current effort and resume point, started if the running one differs.
+    // The CLI for this conversation and resume point, started if the running one differs. A new CLI takes the effort as a flag.
     private async Task<Live> Ensure(string repository, string sessionId, bool stored)
     {
         await spawning.WaitAsync();
@@ -247,7 +250,7 @@ public sealed partial class ClaudeCode(string executable, Action<string> log) : 
             var conversation = conversations.TryGetValue(sessionId, out var c) ? c : null;
             Choice choice;
             lock (gate) choice = conversation?.Choice ?? next;
-            var key = $"{choice.Effort}|{conversation?.ResumeAt}";
+            var key = conversation?.ResumeAt ?? "";
             lock (gate) if (live is { } same && same.Repository == repository && same.SessionId == sessionId && same.Key == key && same.Lines.Running) return same;
             Live? old;
             lock (gate) old = live;

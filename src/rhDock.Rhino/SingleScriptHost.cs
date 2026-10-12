@@ -152,7 +152,7 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
         autoDue = null;
         if (enabled && session.Dirty) ScheduleAuto();
         ScheduleSave();
-        panel?.RefreshResult();
+        Changed();
     }
 
     public void Toggle(RhinoDoc doc)
@@ -180,6 +180,8 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
         panel.RefreshSession();
         if (Auto && session.Dirty) ScheduleAuto();
     }
+    public bool IsAttached(SingleScriptPanel view) => ReferenceEquals(panel, view);
+
     public void Detach(SingleScriptPanel view)
     {
         if (!ReferenceEquals(panel, view)) return;
@@ -221,7 +223,7 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
                     RestoreWorkspace(revisions[^1]);
             }
             catch (Exception ex) { restoreNotice = "Workspace not restored: " + ex.Message; }
-            panel?.RefreshSession();
+            Changed(session: true);
         }
         catch (Exception ex) { panel?.ShowError(ex.Message); }
     }
@@ -261,7 +263,7 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
             revision++;
             if (scriptStates.TryGetValue(entry, out var saved)) RestoreScriptState(saved);
             RebuildPreview();
-            panel?.RefreshSession();
+            Changed(session: true);
             ScheduleSave();
         }
         catch (Exception ex) { panel?.ShowError(ex.Message); }
@@ -270,11 +272,39 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
     /// <summary>Republishes the panel without a viewport redraw, for Agent tab updates.</summary>
     internal void RefreshPanel() => panel?.RefreshResult();
 
+    /// <summary>Raised after every Session change the panel shows; Extensions hear it through <c>rh.Scripts.Changed</c>.</summary>
+    internal event Action? StateChanged;
+
+    private void Changed(bool session = false)
+    {
+        if (session) panel?.RefreshSession();
+        else panel?.RefreshResult();
+        StateChanged?.Invoke();
+    }
+
+    /// <summary>
+    /// How the panel edits an input port. The panel, <c>rh.Scripts.SetInput</c>, and Extension input editors all use this,
+    /// so an Extension can set exactly what the panel can, plus types an enabled Extension registered an editor for.
+    /// </summary>
+    internal static string PortKind(PortDescriptor p)
+    {
+        var type = PortTypeName.Element(p.TypeName);
+        return p.Access == PortAccess.List && type is "System.Double" or "System.Int32" or "System.String" or "System.Boolean" ? "list"
+            : p.Access == PortAccess.Item && type == "System.Double" ? "number"
+            : p.Access == PortAccess.Item && type == "System.Int32" ? "int"
+            : p.Access == PortAccess.Item && type == "System.String" ? "text"
+            : p.Access == PortAccess.Item && type == "System.Boolean" ? "boolean"
+            : p.Access != PortAccess.Tree && IsColor(type) ? "color"
+            : GeometryVocabulary.CanPick(type) ? "pick"
+            : p.Access == PortAccess.Item && Extensions.ExtensionHost.EditorFor(type) is not null ? "extension"
+            : "unsupported";
+    }
+
     /// <summary>The one exit of every user-driven operation: repaint Rhino's viewports and republish the panel state.</summary>
     internal void Refresh()
     {
         document?.Views.Redraw();
-        panel?.RefreshResult();
+        Changed();
     }
 
     public void SetInput(string name, object? value) => ApplyInput(name, value, null);
@@ -296,7 +326,7 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
             else if (hiddenElements.TryGetValue(name, out var hidden)) hidden.IntersectWith(pick.Entries);
             RebuildPreview();
             if (!ReferenceEquals(old, value)) DisposePickedValue(old);
-            panel?.RefreshResult();
+            Changed();
             ScheduleAuto();
             ScheduleSave();
         }
@@ -320,7 +350,7 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
         frameTimes.Clear();
         playing = true;
         StartSolveTimer();
-        panel?.RefreshResult();
+        Changed();
     }
 
     public void Pause()
@@ -328,7 +358,7 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
         if (!playing) return;
         Halt();
         RecordSolve();
-        panel?.RefreshResult();
+        Changed();
     }
 
     /// <summary>Runs exactly one Frame and leaves the Solve paused.</summary>
@@ -348,7 +378,7 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
         unchangedFrames = 0;
         RebuildPreview();
         if (Auto) Play();
-        panel?.RefreshResult();
+        Changed();
     }
 
     public void SetFrameRate(double rate)
@@ -357,7 +387,7 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
         frameRate = rate;
         if (playing) StartSolveTimer();
         ScheduleSave();
-        panel?.RefreshResult();
+        Changed();
     }
 
     private bool SolveEligible => !disposed && activePick is null && !Command.InCommand() && document is not null
@@ -420,7 +450,7 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
     {
         if (!force && DateTime.UtcNow - lastSolvePublish < TimeSpan.FromMilliseconds(100)) return;
         lastSolvePublish = DateTime.UtcNow;
-        panel?.RefreshResult();
+        Changed();
     }
 
     private int FramesPerSecond()
@@ -472,7 +502,7 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
         autoDue = null;
         if (running) return;
         running = true;
-        panel?.RefreshResult();
+        Changed();
         try
         {
             RefreshPickedGeometry();
@@ -484,7 +514,7 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
             {
                 foreach (var name in changedPicks)
                     session.SetInput(name, session.Inputs.GetValueOrDefault(name));
-                panel?.RefreshResult();
+                Changed();
                 return;
             }
             var captured = CaptureInputs();
@@ -494,7 +524,7 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
             ScheduleSave();
         }
         catch (Exception ex) { panel?.ShowError(ex.Message); }
-        finally { running = false; RebuildPreview(); panel?.RefreshResult(); }
+        finally { running = false; RebuildPreview(); Changed(); }
     }
 
     private void ScheduleAuto()
@@ -536,7 +566,7 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
             }
         if (!affected) return;
         ClearPreview(false);
-        panel?.RefreshResult();
+        Changed();
     }
 
     private void RefreshPickedGeometry()
@@ -847,7 +877,7 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
         { panel?.ShowError("Activate the panel's document before picking."); return; }
         if (Command.InCommand()) { panel?.ShowError("Finish the current Rhino command before picking."); return; }
         activePick = new(name, mode, index);
-        panel?.RefreshResult();
+        Changed();
         if (!RhinoApp.RunScript("_RhinoDockPick", false) && activePick is not null)
         {
             activePick = null;
@@ -1082,7 +1112,7 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
                     DisposePickedValue(held[name]);
                 }
             RebuildPreview();
-            panel?.RefreshSession();
+            Changed(session: true);
             ScheduleAuto();
             ScheduleSave();
         }

@@ -44,6 +44,9 @@ public sealed class DockConduit : DisplayConduit
         foreach (var item in Preview.Items)
         {
             if (SourceSelected(e, item)) continue;
+            // A zero weight or size hides the wires or points, as zero shading hides the fill.
+            if (item.Weight == 0 && item.Geometry is Curve or Mesh or Brep or SubD) continue;
+            if (item.Size == 0 && item.Geometry is PointCloud or Point3d) continue;
             switch (item.Geometry)
             {
                 case Curve curve: e.Display.DrawCurve(curve, item.Color, item.Weight); break;

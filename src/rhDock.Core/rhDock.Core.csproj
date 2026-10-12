@@ -11,5 +11,7 @@
   <ItemGroup>
     <Compile Remove="Template/**/*.cs" />
     <EmbeddedResource Include="Template/**" />
+    <Compile Remove="ExtensionTemplate/**/*.cs" />
+    <EmbeddedResource Include="ExtensionTemplate/**" />
   </ItemGroup>
 </Project>

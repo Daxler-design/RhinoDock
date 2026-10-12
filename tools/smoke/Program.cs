@@ -52,6 +52,7 @@ if (args is ["--core-only"])
 {
     ScriptProjectChecks.Run();
     SingleScriptSessionChecks.Run();
+    ExtensionSlotChecks.Run();
     Console.WriteLine("PASS: direct Script and Workspace checks.");
     return 0;
 }

@@ -11,15 +11,16 @@ namespace rhDock.Agents;
 
 /// <summary>
 /// A child agent that speaks one JSON object per line on stdin and stdout (MonoCode's core/child.ts). Claude Code and Pi use it
-/// directly; <see cref="JsonRpc"/> adds JSON-RPC on top for Codex and ACP agents. Disposing it kills the process tree.
+/// directly; <see cref="JsonRpc"/> adds JSON-RPC on top for Codex and ACP agents. Disposing it closes stdin, then kills the process tree after a grace period.
 /// </summary>
 internal sealed class JsonLines : IDisposable
 {
     private readonly Process process;
     private readonly Action<string> log;
     private readonly SemaphoreSlim writing = new(1, 1);
+    private volatile bool disposed;
 
-    /// <summary>Raised on a background thread for each line, in order. A handler must not block on a later line.</summary>
+    /// <summary>Raised on a background thread for each line, in order, until disposed. A handler must not block on a later line.</summary>
     public event Action<JsonElement>? Received;
     /// <summary>Raised once when stdout closes, which is when the process has ended or is ending.</summary>
     public event Action? Exited;
@@ -56,7 +57,7 @@ internal sealed class JsonLines : IDisposable
             while (await process.StandardOutput.ReadLineAsync() is { } line)
             {
                 log("<- " + line);
-                if (!line.TrimStart().StartsWith('{')) continue;
+                if (disposed || !line.TrimStart().StartsWith('{')) continue;
                 try
                 {
                     using var json = JsonDocument.Parse(line);
@@ -71,7 +72,15 @@ internal sealed class JsonLines : IDisposable
         Exited?.Invoke();
     }
 
-    public void Dispose() => AgentProcess.Kill(process);
+    // Closing stdin ends an agent as its own client would; the tree is killed only if it outlives the grace period.
+    // Killing at once (SIGSTOP, a scan of every process, SIGKILL) preceded each reported Rhino exit on a Claude Code restart.
+    public void Dispose()
+    {
+        disposed = true;
+        try { process.StandardInput.Close(); }
+        catch (Exception ex) when (ex is System.IO.IOException or ObjectDisposedException or InvalidOperationException) { }
+        _ = Task.Delay(TimeSpan.FromSeconds(5)).ContinueWith(_ => AgentProcess.Kill(process), TaskScheduler.Default);
+    }
 }
 
 /// <summary>JSON-RPC 2.0 over <see cref="JsonLines"/> (MonoCode's core/jsonRpc.ts). Codex leaves out the "jsonrpc" member; ACP agents expect it.</summary>

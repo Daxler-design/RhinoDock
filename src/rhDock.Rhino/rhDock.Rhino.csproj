@@ -4,7 +4,7 @@
     <TargetExt>.rhp</TargetExt>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Version>0.5.8</Version>
+    <Version>0.6.7</Version>
     <Description>Rhino 8 host for single-Script C# Workspaces</Description>
   </PropertyGroup>
   <ItemGroup>
