@@ -4,14 +4,14 @@
     <TargetExt>.rhp</TargetExt>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Version>0.6.7</Version>
+    <Version>0.6.8</Version>
     <Description>Rhino 8 host for single-Script C# Workspaces</Description>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../rhDock.Core/rhDock.Core.csproj" />
     <ProjectReference Include="../rhDock.Agents/rhDock.Agents.csproj" />
     <PackageReference Include="DiffPlex" Version="1.9.0" GeneratePathProperty="true" />
-    <PackageReference Include="RhinoCommon" Version="8.*" Private="false" ExcludeAssets="runtime" />
+    <PackageReference Include="RhinoCommon" Version="8.30.26103.11001" Private="false" ExcludeAssets="runtime" />
     <EmbeddedResource Include="../../frontend/dist/index.html" LogicalName="rhDock.Frontend.index.html" />
     <EmbeddedResource Include="Assets/PanelIcon.ico" LogicalName="rhDock.PanelIcon.ico" />
   </ItemGroup>

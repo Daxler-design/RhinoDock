@@ -1,5 +1,5 @@
 name: rhdock
-version: 0.6.7
+version: 0.6.8
 authors:
   - Daxler-design
 description: Your C# tools, your coding agent, and your own Extensions inside Rhino 8. Save a file and Rhino updates.

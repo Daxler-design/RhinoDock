@@ -2,6 +2,10 @@
 
 User-visible changes. Newest first.
 
+## 0.6.8
+
+- Now installs on Rhino 8.30 and later (was 8.35). Rhino 8.34 users can find and install it from the Package Manager.
+
 ## 0.6.7
 
 - **Extensions.** A new Extensions tab opens an Extension Repo and enables, reloads, and creates Extensions. They hot-reload on save, open their own windows, drive the Script session, and can add editors for input types the panel lacks. See [Extensions](docs/extensions.md).
