@@ -7,8 +7,11 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build && node scripts/inline.mjs",
     "check": "tsc --noEmit",
+    "check:script-controls": "node scripts/check-script-controls.mjs",
     "check:mirror": "node scripts/check-mirror.mjs",
-    "check:bridge": "node scripts/check-bridge.mjs"
+    "check:bridge": "node scripts/check-bridge.mjs",
+    "check:lists": "node scripts/check-lists.mjs",
+    "check:theme": "node scripts/check-theme.mjs"
   },
   "dependencies": {
     "@shadcn/react": "^0.3.1",

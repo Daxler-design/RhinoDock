@@ -30,6 +30,7 @@ public sealed partial class AcpAgent
                 else if (Str(content, "type") == "image") session.User.Value.Images.Add(new(Str(content, "mimeType") ?? "image/png", Str(content, "data") ?? "", "image"));
                 return;
             case "agent_message_chunk" when Str(Obj(update, "content"), "text") is { } text: Emit(session, new TextDelta(sid, text)); break;
+            case "agent_message_chunk" when ToolImages.From(Obj(update, "content"), "image") is { } picture: Emit(session, new MediaMessage(sid, [picture])); break;
             case "agent_thought_chunk" when Str(Obj(update, "content"), "text") is { } thought: Emit(session, new ReasoningDelta(sid, thought)); break;
             case "tool_call" or "tool_call_update": Emit(session, Tool(sid, update)); break;
             case "plan":
@@ -78,6 +79,8 @@ public sealed partial class AcpAgent
         };
         var status = Str(update, "status") switch { "pending" => "Pending", "in_progress" => "InProgress", "completed" => "Completed", "failed" => "Failed", _ => null };
         var detail = new StringBuilder();
+        var title = Str(update, "title");
+        var images = ToolImages.In(Arr(update, "content").Select(b => Obj(b, "content")), title ?? "image");
         foreach (var block in Arr(update, "content"))
             if (Str(block, "type") == "diff")
             {
@@ -90,7 +93,7 @@ public sealed partial class AcpAgent
         var id = Str(update, "toolCallId") ?? "";
         tools.TryGetValue((sid, id), out var previous);
         var next = new ToolCall(sid, id, Str(update, "title") ?? previous?.Title, kind ?? previous?.Kind, status ?? previous?.Status,
-            detail.Length > 0 ? detail.ToString().TrimEnd('\n') : previous?.Detail, files.Length > 0 ? files : previous?.Files);
+            detail.Length > 0 ? detail.ToString().TrimEnd('\n') : previous?.Detail, files.Length > 0 ? files : previous?.Files, Images: images ?? previous?.Images);
         tools[(sid, id)] = next;
         return next;
     }

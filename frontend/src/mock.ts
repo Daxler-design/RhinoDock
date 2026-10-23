@@ -7,6 +7,7 @@ export const mock: Snapshot = {
     { name: 'Curve Smooth', path: 'Components/CurveSmooth.cs', category: 'Curve' },
   ], selected: 'Components/FacadeStudy.cs', status: 'completed', auto: false,
   inputs: [
+    { name: 'Mode', type: 'Example.Mode', access: 'Item', optional: true, kind: 'text', defaultValue: 'Cylinder', choices: ['Cylinder', 'Tangent', 'Cone', 'Rails'].map(name => ({ key: name, label: name, value: name })) },
     { name: 'Boundary', type: 'Curve', access: 'Item', optional: false, kind: 'pick', picked: '1 curve', count: 1, family: 'curve',
       items: [{ label: 'NurbsCurve · degree 3 · 14 control points · closed', visible: true }],
       preview: { visible: true, style: { color: '#9AA0F2', custom: false, weight: 2, size: 5, shading: 30 } } },
@@ -19,10 +20,11 @@ export const mock: Snapshot = {
     { name: 'Width', type: 'Double', access: 'Item', optional: false, kind: 'number', value: '2.4', range: { min: 0, max: 10, step: 0.1 } },
     { name: 'Angle', type: 'Double', access: 'Item', optional: false, kind: 'number', value: '1.51' },
     { name: 'Count', type: 'Int32', access: 'Item', optional: false, kind: 'int', value: '12' },
-    { name: 'Labels', type: 'List<String>', access: 'List', optional: true, kind: 'list', value: 'North, South' },
+    { name: 'Labels', type: 'List<String>', access: 'List', optional: true, kind: 'list', itemKind: 'text', value: 'North, South', count: 2, items: [{ label: 'North', value: 'North', visible: true }, { label: 'South', value: 'South', visible: true }] },
     { name: 'Refresh', type: 'Boolean', access: 'Item', optional: true, kind: 'boolean', value: 'false', boolStyle: 'press' },
+    { name: 'Values', type: 'List<Double>', access: 'List', optional: false, kind: 'list', itemKind: 'number', value: '2, 4, 6', count: 3, items: [2, 4, 6].map(n => ({ label: String(n), value: String(n), visible: true })) },
     { name: 'Tint', type: 'System.Drawing.Color', access: 'Item', optional: true, kind: 'color' },
-    { name: 'Palette', type: 'System.Collections.Generic.List`1[[System.Drawing.Color, System.Drawing.Primitives]]', access: 'List', optional: true, kind: 'color', value: '#9AA0F2, #56B98B80' },
+    { name: 'Palette', type: 'System.Collections.Generic.List`1[[System.Drawing.Color, System.Drawing.Primitives]]', access: 'List', optional: true, kind: 'color', itemKind: 'color', value: '#9AA0F2, #56B98B80', count: 2, items: ['#9AA0F2', '#56B98B80'].map(value => ({ label: value, value, visible: true })) },
   ], outputs: [
     { name: 'Panels', type: 'Mesh[]', count: 24, summary: '24 meshes', preview: true, visible: true, bake: true, family: 'surface', style: { color: '#40E0D0', custom: false, weight: 1, size: 5, shading: 30 } },
     { name: 'Edges', type: 'Curve[]', count: 24, summary: '24 curves', preview: true, visible: true, bake: true, family: 'curve', style: { color: '#EC6F67', custom: true, weight: 2, size: 5, shading: 30 } },
@@ -31,7 +33,7 @@ export const mock: Snapshot = {
   ], log: ['Run completed in 42 ms'],
   agent: undefined as Agent | undefined,
   extensions: { repository: '~/Projects/rhdock-extensions', items: [
-    { name: 'SunStudy', enabled: true, startup: true, generation: 3, leaked: 0 },
+    { name: 'CameraView', enabled: true, startup: true, generation: 3, leaked: 0 },
     { name: 'MyExtension', enabled: true, startup: false, generation: 1, leaked: 0, error: "MyExtension.cs(12,9): error CS0103: The name 'vew' does not exist in the current context" },
     { name: 'SunStudy', enabled: false, startup: true, generation: 0, leaked: 0 },
   ] },
@@ -57,9 +59,11 @@ export const mockAgent: Agent = {
   rewound: { id: 'm-rewound', text: 'Now replace the falloff power with a smoothstep curve in every attractor Script and rerun them', filesRestored: true }, files: ['Components/FacadeStudy.cs', 'Components/HexLayout.cs', 'Core/Falloff.cs', 'AGENTS.md'],
   changes: [{ path: 'Components/FacadeStudy.cs', status: 'modified', added: 2, removed: 1, diff: ' public static double Scale(double t)\n-    => 1 - t;\n+    => Math.Max(minScale,\n+        Math.Pow(1 - t, power));\n }\n' }],
   items: [
-    { ...item, id: 1, kind: 'user', text: 'Make the cells shrink faster near the attractor, and keep the smallest cell above 0.2.', chips: ['Facade Study'], images: [901], checkpoint: true, elapsedMs: 28100 },
+    { ...item, id: 1, kind: 'user', text: '> the attractor falloff is linear\n\nMake the cells shrink **faster** near the attractor,\nand keep the smallest cell above `0.2`.', chips: ['Facade Study'], images: [901], checkpoint: true, elapsedMs: 28100 },
     { ...item, id: 2, kind: 'thought', text: 'The falloff lives in the Facade Study Script. I should read it first.' },
     { ...item, id: 3, kind: 'tool', text: '', title: 'read', toolKind: 'Read', status: 'Completed', files: ['Components/FacadeStudy.cs'], detail: 'Read file Components/FacadeStudy.cs, lines 1-40' },
+    { ...item, id: 61, kind: 'assistant', text: 'Here is the render I saved: ![Facade render](renders/facade.png) and a missing one: ![gone](renders/missing.png)', images: [103] },
+    { ...item, id: 60, kind: 'tool', text: '', title: 'Capture viewport', toolKind: 'Other', status: 'Completed', images: [101, 102] },
     { ...item, id: 4, kind: 'tool', text: '', title: 'patch', toolKind: 'Edit', status: 'Completed', files: ['Components/FacadeStudy.cs'], detail: '*** Begin Patch\n*** Update File: Components/FacadeStudy.cs\n@@\n-    => 1 - t;\n+    => Math.Max(minScale,\n+        Math.Pow(1 - t, power));\n*** End Patch' },
     { ...item, id: 50, kind: 'tool', text: '', callId: 'task-1', title: 'Check the build', toolKind: 'Think', status: 'Completed' },
     { ...item, id: 5, kind: 'tool', parent: 'task-1', text: '', title: 'shell', toolKind: 'Execute', status: 'Completed', files: [], detail: '$ dotnet build\nBuild succeeded.' },

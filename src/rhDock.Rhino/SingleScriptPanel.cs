@@ -18,11 +18,14 @@ public sealed class SingleScriptPanel : Panel, global::Rhino.UI.IPanel
     private const uint EventSystemForeground = 3;
     private readonly SingleScriptHost host;
     private readonly WebView web;
+    private string? pageHtml;
+    private bool ownLoad;
     private readonly SnapshotSender snapshots;
     private DevMirrorClient? mirror;
     private bool loaded;
     private string? message;
     private bool messageIsError;
+    private bool messageIsNotice;
     private IntPtr foregroundHook;
     private WinEventCallback? foregroundCallback;
     private bool rhinoWasForeground;
@@ -45,19 +48,27 @@ public sealed class SingleScriptPanel : Panel, global::Rhino.UI.IPanel
         }, action => Application.Instance.AsyncInvoke(action));
         Content = web;
         web.MessageReceived += OnMessage;
-        web.DocumentLoading += (_, _) => { loaded = false; lastSnapshot = null; snapshots.ClearPending(); };
+        web.DocumentLoading += (_, _) =>
+        {
+            loaded = false; lastSnapshot = null; snapshots.ClearPending();
+            // The page is loaded from a string, so the browser's own Reload would navigate to a blank page: load it again.
+            if (!ownLoad && pageHtml is not null && !IsDisposed) Application.Instance.AsyncInvoke(() => { if (IsDisposed) return; ownLoad = true; web.LoadHtml(pageHtml); });
+        };
+        web.DocumentLoaded += (_, _) => ownLoad = false;
         host.Attach(this);
         MirrorServer.AttachPanel(Handle);
         using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("rhDock.Frontend.index.html");
         if (stream is null) { Content = new Label { Text = "rhDock frontend is missing. Build frontend assets and rebuild the plugin." }; return; }
         using var reader = new StreamReader(stream);
-        web.LoadHtml(reader.ReadToEnd());
+        pageHtml = reader.ReadToEnd();
+        ownLoad = true;
+        web.LoadHtml(pageHtml);
     }
 
     public void RefreshSession() { message = null; messageIsError = false; Publish(); }
     public void RefreshResult() => Publish();
-    public void ShowError(string value) { message = value; messageIsError = true; Publish(); }
-    public void ShowMessage(string value) { message = value; messageIsError = false; Publish(); }
+    public void ShowError(string value) { message = value; messageIsError = true; messageIsNotice = false; Publish(); }
+    public void ShowMessage(string value, bool showBanner = false) { message = value; messageIsError = false; messageIsNotice = showBanner; Publish(); }
     public bool MirrorActive => mirror is not null;
     public void StartMirror(int port)
     {
@@ -71,6 +82,7 @@ public sealed class SingleScriptPanel : Panel, global::Rhino.UI.IPanel
     {
         host.Attach(this);
         WatchForeground();
+        Application.Instance.AsyncInvoke(() => { if (!IsDisposed) WebViewDiagnostics.Record(web, "shown"); });
     }
     public void PanelHidden(uint documentSerialNumber, global::Rhino.UI.ShowPanelReason reason)
     {
@@ -187,7 +199,11 @@ public sealed class SingleScriptPanel : Panel, global::Rhino.UI.IPanel
             if (action == "ready")
             {
                 refresh = false;
-                if (!loaded) RhinoApp.WriteLine($"rhDock [{Environment.ProcessId}]: panel bridge ready.");
+                if (!loaded)
+                {
+                    RhinoApp.WriteLine($"rhDock [{Environment.ProcessId}]: panel bridge ready.");
+                    WebViewDiagnostics.Record(web, "ready", root.TryGetProperty("viewport", out var viewport) ? viewport.GetRawText() : null);
+                }
                 loaded = true; Publish(true); return;
             }
             // Opening a file closes the panel's document and detaches it, but Windows Rhino keeps the panel on screen without
@@ -195,11 +211,13 @@ public sealed class SingleScriptPanel : Panel, global::Rhino.UI.IPanel
             if (!host.IsAttached(this)) { host.Attach(this); WatchForeground(); }
             if (root.TryGetProperty("revision", out var rev) && rev.GetInt32() != host.Revision) return;
             // Ignore late draft/approval actions from a conversation the user has just switched away from.
-            if (action?.StartsWith("agent", StringComparison.Ordinal) == true && action != "agentImage" && root.TryGetProperty("viewId", out var view)
+            if (action?.StartsWith("agent", StringComparison.Ordinal) == true && action is not ("agentImage" or "agentImagePath") && root.TryGetProperty("viewId", out var view)
                 && view.ValueKind == JsonValueKind.String && view.GetString() != AgentHost.Current.ViewId) return;
             message = null;
             messageIsError = false;
             string Name() => root.GetProperty("name").GetString() ?? "";
+            // One string of the action's values object, empty when it is missing.
+            string Value(string key) => root.TryGetProperty("values", out var all) && all.ValueKind == JsonValueKind.Object && all.TryGetProperty(key, out var v) ? v.GetString() ?? "" : "";
             switch (action)
             {
                 case "open": ChooseRepository(false); break;
@@ -209,6 +227,7 @@ public sealed class SingleScriptPanel : Panel, global::Rhino.UI.IPanel
                         if (dialog.ShowDialog(this) == DialogResult.Ok) host.ExportWorkspace(dialog.FileName);
                     break;
                 case "agentSelect": if (host.Session.Repository is { } switchIn) AgentHost.Current.SelectAgent(switchIn, root.GetProperty("value").GetString() ?? ""); refresh = false; break;
+                case "agentHostConnect": if (host.Session.Repository is { } hostRepo) AgentHost.Current.ToggleHostConnection(hostRepo); refresh = false; break;
                 case "agentConnect": if (host.Session.Repository is { } connectTo) AgentHost.Current.Connect(connectTo); refresh = false; break;
                 case "agentPrompt":
                     if (host.Session.Repository is { } promptIn)
@@ -216,7 +235,8 @@ public sealed class SingleScriptPanel : Panel, global::Rhino.UI.IPanel
                         var (blocks, linked, chips) = AgentContext(promptIn, root.TryGetProperty("context", out var context) && context.GetBoolean(),
                             root.TryGetProperty("mentions", out var mentions) ? mentions : default);
                         AgentHost.Current.Prompt(promptIn, root.GetProperty("value").GetString() ?? "", blocks, linked, chips,
-                            root.TryGetProperty("steer", out var steer) && steer.ValueKind == JsonValueKind.True);
+                            root.TryGetProperty("steer", out var steer) && steer.ValueKind == JsonValueKind.True,
+                            root.TryGetProperty("draft", out var draft) && draft.ValueKind == JsonValueKind.String ? draft.GetString() : null);
                     }
                     refresh = false; break;
                 case "agentMode": AgentHost.Current.SetMode(root.GetProperty("value").GetString() ?? ""); refresh = false; break;
@@ -232,20 +252,55 @@ public sealed class SingleScriptPanel : Panel, global::Rhino.UI.IPanel
                 case "agentCapture": CaptureViewport(); refresh = false; break;
                 case "agentDetach": AgentHost.Current.Detach(root.GetProperty("index").GetInt32()); refresh = false; break;
                 case "agentUnqueue": AgentHost.Current.Unqueue(root.GetProperty("index").GetInt32()); refresh = false; break;
+                case "agentEditQueued": AgentHost.Current.EditQueued(root.GetProperty("index").GetInt32()); refresh = false; break;
                 case "agentSteer": AgentHost.Current.SteerQueued(root.GetProperty("index").GetInt32()); refresh = false; break;
                 case "agentKeep": if (host.Session.Repository is { } keepIn) AgentHost.Current.Keep(keepIn); refresh = false; break;
                 case "agentRevert": AgentHost.Current.Revert(root.GetProperty("path").GetString() ?? ""); refresh = false; break;
                 case "agentRestore": AgentHost.Current.Restore(root.GetProperty("index").GetInt32()); refresh = false; break;
                 case "agentUndoRewind": AgentHost.Current.UndoRewind(); refresh = false; break;
                 case "agentOpenUrl":
-                    if (Uri.TryCreate(root.GetProperty("value").GetString(), UriKind.Absolute, out var url) && url.Scheme is "http" or "https")
+                    var link = root.GetProperty("value").GetString() ?? "";
+                    if (Uri.TryCreate(link, UriKind.Absolute, out var url) && url.Scheme is "http" or "https")
                         System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url.AbsoluteUri) { UseShellExecute = true });
+                    else OpenLocalFile(link);
                     refresh = false; break;
                 case "agentImage":
-                    var imageId = root.GetProperty("value").GetInt32();
-                    if (AgentHost.Current.Picture(imageId) is { } picture)
-                        _ = web.ExecuteScriptAsync($"window.rhDockImage && window.rhDockImage({imageId}, {JsonSerializer.Serialize(picture)});");
+                case "agentImagePath":
+                    // Thumbnails for the conversation, the full image when the preview opens; read and shrunk off the UI thread.
+                    var small = root.TryGetProperty("small", out var smallValue) && smallValue.ValueKind == JsonValueKind.True;
+                    var imageKey = root.GetProperty("value");
+                    var byId = action == "agentImage";
+                    var imageArg = byId ? imageKey.GetInt32().ToString(CultureInfo.InvariantCulture) : JsonSerializer.Serialize(imageKey.GetString() ?? "");
+                    var imageRef = byId ? null : imageKey.GetString() ?? "";
+                    var imageId = byId ? imageKey.GetInt32() : 0;
+                    _ = Task.Run(() =>
+                    {
+                        var url = byId ? AgentHost.Current.Picture(imageId) : AgentHost.Current.PictureFromPath(imageRef!);
+                        if (small) url = ImageThumbnail.Of(url);
+                        var call = byId ? "rhDockImage" : "rhDockImagePath";
+                        RhinoApp.InvokeOnUiThread((Action)(() => _ = web.ExecuteScriptAsync($"window.{call} && window.{call}({imageArg}, {JsonSerializer.Serialize(url)}, {(small ? "true" : "false")});")));
+                    });
                     refresh = false; break;
+                case "saveImage":
+                    // An image from the Agent tab's preview, saved where the user chooses. The page names it by id or path, never by its data.
+                    var saveUrl = int.TryParse(Value("id"), out var saveId) ? AgentHost.Current.Picture(saveId)
+                        : Value("path") is { Length: > 0 } savePath ? AgentHost.Current.PictureFromPath(savePath) : null;
+                    if (saveUrl is { } dataUrl && dataUrl.StartsWith("data:image/", StringComparison.Ordinal) && dataUrl.IndexOf(";base64,", StringComparison.Ordinal) is var comma and > 0)
+                    {
+                        var extension = dataUrl[11..comma] switch { "jpeg" => ".jpg", "png" => ".png", "gif" => ".gif", "webp" => ".webp", _ => ".png" };
+                        var suggested = Path.GetFileNameWithoutExtension(Value("name")) is { Length: > 0 } baseName ? baseName : "image";
+                        using var dialog = new SaveFileDialog { FileName = suggested + extension };
+                        if (dialog.ShowDialog(this) == DialogResult.Ok) File.WriteAllBytes(dialog.FileName, Convert.FromBase64String(dataUrl[(comma + 8)..]));
+                    }
+                    refresh = false; break;
+                case "theme":
+                    // The panel theme is a small JSON text the page owns; keep it per user in the plug-in settings, bounded.
+                    if ((root.GetProperty("value").GetString() ?? "") is { Length: <= 200 } themeText) RhinoDockPlugin.Instance?.Settings.SetString("Theme", themeText);
+                    break;
+                case "recentColors":
+                    // Colors picked recently in any color picker, a short JSON list the page owns; kept per user beside the theme.
+                    if ((root.GetProperty("value").GetString() ?? "") is { Length: <= 200 } colorsText) RhinoDockPlugin.Instance?.Settings.SetString("RecentColors", colorsText);
+                    break;
                 case "clientError": HostLog.Write("panel " + root.GetProperty("value").GetString()); refresh = false; break;
                 case "extOpen":
                     using (var dialog = new SelectFolderDialog { Title = "Open an Extension Repo" })
@@ -256,14 +311,18 @@ public sealed class SingleScriptPanel : Panel, global::Rhino.UI.IPanel
                     using (var dialog = new SelectFolderDialog { Title = "Choose where to create the Extension Repo" })
                         if (dialog.ShowDialog(this) == DialogResult.Ok) Extensions.ExtensionHost.Current.NewRepository(Path.Combine(dialog.Directory, repoName));
                     refresh = false; break;
-                case "extNew": Extensions.ExtensionHost.Current.NewExtension(root.GetProperty("value").GetString() ?? ""); refresh = false; break;
                 case "extEnable": Extensions.ExtensionHost.Current.SetEnabled(Name(), root.GetProperty("value").GetBoolean()); refresh = false; break;
                 case "extStartup": Extensions.ExtensionHost.Current.SetStartup(Name(), root.GetProperty("value").GetBoolean()); refresh = false; break;
                 case "extReload": Extensions.ExtensionHost.Current.Reload(Name()); refresh = false; break;
-                case "extEdit": Extensions.ExtensionHost.Current.Edit(Name()); refresh = false; break;
-                case "extReveal": Extensions.ExtensionHost.Current.Reveal(root.TryGetProperty("name", out var revealName) ? revealName.GetString() : null); refresh = false; break;
+                case "extEdit": Extensions.ExtensionHost.Current.Edit(Name(), root.TryGetProperty("index", out var editIndex) ? editIndex.GetInt32() : null); refresh = false; break;
+                case "extReveal": Extensions.ExtensionHost.Current.Reveal(); refresh = false; break;
                 case "agentCancel": AgentHost.Current.Cancel(); refresh = false; break;
                 case "agentNew": if (host.Session.Repository is { } newIn) AgentHost.Current.NewConversation(newIn); refresh = false; break;
+                case "agentSide": if (host.Session.Repository is { } sideIn) AgentHost.Current.Side(sideIn, Value("quote"), Value("context")); refresh = false; break;
+                case "agentSideClose": if (host.Session.Repository is { } closeIn) AgentHost.Current.CloseSide(closeIn, root.TryGetProperty("value", out var closeId) ? closeId.GetString() : null); refresh = false; break;
+                case "agentSideBack": if (host.Session.Repository is { } backIn) AgentHost.Current.BackFromSide(backIn); refresh = false; break;
+                case "agentSideOpen": AgentHost.Current.OpenSide(root.GetProperty("value").GetString() ?? ""); refresh = false; break;
+                case "agentHistory": AgentHost.Current.LoadEarlier(root.GetProperty("index").GetInt32()); refresh = false; break;
                 case "agentLoad": if (host.Session.Repository is { } loadIn) AgentHost.Current.Load(loadIn, root.GetProperty("value").GetString() ?? ""); refresh = false; break;
                 case "agentPermission": AgentHost.Current.Answer(root.GetProperty("value").GetString()); refresh = false; break;
                 case "agentQuestion": AgentHost.Current.AnswerQuestion(root.TryGetProperty("answers", out var answers) ? answers : default); refresh = false; break;
@@ -279,6 +338,10 @@ public sealed class SingleScriptPanel : Panel, global::Rhino.UI.IPanel
                     if (root.TryGetProperty("range", out var inputRange) && inputRange.ValueKind == JsonValueKind.Object)
                         host.SetRange(Name(), new NumericRange(inputRange.GetProperty("min").GetDouble(), inputRange.GetProperty("max").GetDouble(), inputRange.GetProperty("step").GetDouble()));
                     SetInput(Name(), root.GetProperty("value")); break;
+                case "inputItem":
+                    SetInputItem(Name(), root.GetProperty("index").GetInt32(), root.GetProperty("value")); break;
+                case "activeItem":
+                    host.SetActiveItem(Name(), root.TryGetProperty("index", out var activeIndex) ? activeIndex.GetInt32() : null); break;
                 case "pulse": host.Pulse(Name()); break;
                 case "run":
                     if (root.TryGetProperty("values", out var values))
@@ -295,11 +358,18 @@ public sealed class SingleScriptPanel : Panel, global::Rhino.UI.IPanel
                         root.TryGetProperty("index", out var pickIndex) ? pickIndex.GetInt32() : -1);
                     break;
                 case "cancelPick": host.CancelPick(); break;
-                case "reorder": host.ReorderPicked(Name(), root.GetProperty("from").GetInt32(), root.GetProperty("to").GetInt32()); break;
+                case "reorder": host.ReorderInput(Name(), root.GetProperty("from").GetInt32(), root.GetProperty("to").GetInt32()); break;
                 case "selectPicked":
                     host.SelectPicked(Name(), root.TryGetProperty("index", out var selectIndex) && selectIndex.ValueKind == JsonValueKind.Number ? selectIndex.GetInt32() : null);
                     break;
                 case "element": host.SetElementVisible(Name(), root.GetProperty("index").GetInt32(), root.GetProperty("visible").GetBoolean()); break;
+                case "undoInput": host.UndoInput(false); break;
+                case "redoInput": host.UndoInput(true); break;
+                case "previewAll": host.SetPreviewAll(root.GetProperty("visible").GetBoolean(), root.TryGetProperty("section", out var previewSection) ? previewSection.GetString() ?? "all" : "all"); break;
+                case "layout":
+                    var layoutJson = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+                    host.SetLayout(root.GetProperty("layoutRevision").GetInt32(), root.GetProperty("inputs").Deserialize<SectionLayout>(layoutJson)!, root.GetProperty("outputs").Deserialize<SectionLayout>(layoutJson)!);
+                    break;
                 case "preview": host.SetPreviewVisible(Name(), root.GetProperty("visible").GetBoolean()); break;
                 case "bake": host.Bake(root.GetProperty("names").EnumerateArray().Select(item => item.GetString() ?? "")); break;
                 case "range":
@@ -312,7 +382,11 @@ public sealed class SingleScriptPanel : Panel, global::Rhino.UI.IPanel
                     var style = root.GetProperty("style");
                     int? Int(string key) => style.TryGetProperty(key, out var item) && item.ValueKind == JsonValueKind.Number ? item.GetInt32() : null;
                     host.SetPreviewStyle(Name(), new PreviewStyle(style.TryGetProperty("color", out var color) && color.ValueKind == JsonValueKind.String ? color.GetString() : null,
-                        Int("weight"), Int("size"), Int("shading")));
+                        Int("weight"), Int("size"), Int("shading"))
+                    {
+                        Edges = style.TryGetProperty("edges", out var edges) ? JsonSerializer.Deserialize<PreviewChannel>(edges.GetRawText(), new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) : null,
+                        Fill = style.TryGetProperty("fill", out var fill) ? JsonSerializer.Deserialize<PreviewChannel>(fill.GetRawText(), new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) : null
+                    });
                     break;
             }
         }
@@ -337,6 +411,17 @@ public sealed class SingleScriptPanel : Panel, global::Rhino.UI.IPanel
         return name;
     }
 
+    private void SetInputItem(string name, int index, JsonElement raw)
+    {
+        var port = host.Session.Selected?.Ports.FirstOrDefault(p => p.Name == name && !p.IsOutput && p.Access == PortAccess.List)
+            ?? throw new ArgumentException("No list input named " + name);
+        var type = PortTypeName.Element(port.TypeName);
+        var text = raw.ValueKind == JsonValueKind.String ? raw.GetString() ?? "" : raw.ToString();
+        if (Extensions.ExtensionHost.Editor(type, true) is { } editor && editor.Control(type) is not null)
+            editor.Parse(type, name, index, text);
+        else host.SetInputItem(name, index, Extensions.InputItems.Parse(type, text));
+    }
+
     private void SetInput(string name, JsonElement raw)
     {
         var port = host.Session.Selected?.Ports.FirstOrDefault(p => p.Name == name && !p.IsOutput);
@@ -344,9 +429,15 @@ public sealed class SingleScriptPanel : Panel, global::Rhino.UI.IPanel
         if (raw.ValueKind == JsonValueKind.Null) { host.SetInput(name, null); return; }
         if (port.TypeName == "System.Boolean" && raw.ValueKind is JsonValueKind.True or JsonValueKind.False)
         { host.SetInput(name, raw.GetBoolean()); return; }
-        var text = raw.GetString() ?? "";
+        var text = raw.ValueKind == JsonValueKind.String ? raw.GetString() ?? "" : raw.ToString();
         if (string.IsNullOrWhiteSpace(text)) { host.SetInput(name, null); return; }
         var element = PortTypeName.Element(port.TypeName);
+        if (Extensions.ExtensionHost.Editor(element, port.Access == PortAccess.List) is { } editor && editor.Control(element) is not null)
+        {
+            if (port.Access == PortAccess.List) editor.ParseList(element, name, text.Split(',', StringSplitOptions.TrimEntries));
+            else editor.Parse(element, name, null, text);
+            return;
+        }
         if (SingleScriptHost.IsColor(element))
         {
             var colors = text.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).Select(ColorText.Parse).ToArray();
@@ -385,13 +476,27 @@ public sealed class SingleScriptPanel : Panel, global::Rhino.UI.IPanel
             var value = session.Inputs.GetValueOrDefault(p.Name);
             var picked = kind == "pick" ? host.Picked(p.Name) : null;
             var family = kind == "pick" ? GeometryVocabulary.FamilyOf(type) : null;
+            var editor = Extensions.ExtensionHost.Editor(type, p.Access == PortAccess.List);
+            var control = editor?.Control(type);
+            var list = p.Access == PortAccess.List && kind != "pick" && value is IEnumerable and not string
+                ? ((IEnumerable)value).Cast<object?>().ToArray() : null;
+            string? ItemText(object? item) => control is not null ? editor!.Format(type, item)
+                : Scalar(item) ?? (item as IFormattable)?.ToString(null, CultureInfo.InvariantCulture) ?? item?.ToString();
+            var itemKind = control ?? (editor is not null ? "extension" : type == "System.Double" ? "number" : type == "System.Int32" ? "int"
+                : type == "System.String" ? "text" : type == "System.Boolean" ? "boolean"
+                : SingleScriptHost.IsColor(type) ? "color" : editor is not null ? "extension" : "unsupported");
             return new { name = p.Name, type = p.TypeName, access = p.Access.ToString(), optional = p.IsOptional,
-                tooltip = p.Tooltip, kind, value = kind == "pick" ? null
-                    : kind == "extension" ? (value as IFormattable)?.ToString(null, CultureInfo.InvariantCulture) ?? value?.ToString() : FormatInput(value),
-                picked = picked?.Label, items = picked?.Items.Take(200).Select(item => new { label = item.Label, visible = item.Visible }).ToArray(),
-                count = picked?.Items.Length ?? 0, family, preview = kind == "pick" ? (object?)new { visible = host.PreviewVisible(p.Name), style = StyleSnapshot(p.Name, family, true) } : null,
+                defaultValue = p.DefaultValue,
+                choices = p.EnumValues.Select(name => new { label = name, key = name, value = name }).ToArray(),
+                tooltip = p.Tooltip, kind = p.Access == PortAccess.Item && kind != "pick" && editor is not null ? control ?? "extension" : kind,
+                itemKind, activeIndex = host.ActiveItem?.Name == p.Name ? host.ActiveItem.Index : null,
+                value = p.Access == PortAccess.Item && control is not null ? ItemText(value) : kind == "pick" ? null
+                    : kind == "extension" ? (value as IFormattable)?.ToString(null, CultureInfo.InvariantCulture) ?? value?.ToString() : list is not null && editor is not null ? string.Join(", ", list.Select(ItemText)) : FormatInput(value),
+                picked = picked?.Label, items = picked?.Items.Take(200).Select(item => new { label = item.Label, visible = item.Visible, value = (string?)null }).ToArray()
+                    ?? list?.Take(200).Select(ItemText).Select(text => new { label = text ?? "Not set", visible = true, value = text }).ToArray(),
+                count = picked?.Items.Length ?? list?.Length ?? 0, family, preview = kind == "pick" ? (object?)new { visible = host.PreviewVisible(p.Name), style = StyleSnapshot(p.Name, family, true) } : null,
                 range = host.NumericRanges.GetValueOrDefault(p.Name), boolStyle = host.BooleanStyles.GetValueOrDefault(p.Name) ?? "press",
-                editor = kind == "extension" ? Extensions.ExtensionHost.EditorFor(type) : null };
+                editor = Extensions.ExtensionHost.EditorFor(type, p.Access == PortAccess.List) };
         }).ToArray() ?? [];
         var outputs = session.HasCurrentOutputs ? session.Outputs.Select(pair =>
         {
@@ -415,14 +520,16 @@ public sealed class SingleScriptPanel : Panel, global::Rhino.UI.IPanel
         var snapshot = JsonSerializer.Serialize(new { pid = Environment.ProcessId, revision = host.Revision, repository = session.Repository,
             scripts = (session.Scripts.Count > 0 ? session.Scripts : selected is null ? [] : new[] { selected })
                 .Select(script => new { name = script.Name, path = script.EntryFile, category = script.Category.Length > 0 ? script.Category : null }).ToArray(),
-            selected = selected?.EntryFile, inputs, outputs, status, auto = host.Auto,
+            selected = selected?.EntryFile, inputs, outputs, status, auto = host.Auto, previewAll = host.PreviewAll, inputPreviewAll = host.InputPreviewAll, outputPreviewAll = host.OutputPreviewAll, layout = host.CurrentLayout(),
             error = messageIsError ? message : session.Result.Error,
             log = message is not null && !messageIsError ? session.Result.Log.Append(message).ToArray() : session.Result.Log,
             statusLine = session.Result.StatusLine,
-            historical = host.HistoricalRun, notice = host.RestoreNotice,
+            historical = host.HistoricalRun, notice = (messageIsNotice ? message : null) ?? host.RestoreNotice,
             picking = host.ActivePick is { } pick ? new { name = pick.Name, mode = pick.Mode, index = pick.Index } : null,
             agent = AgentHost.Current.Snapshot(),
             extensions = Extensions.ExtensionHost.Current.Snapshot(),
+            theme = RhinoDockPlugin.Instance?.Settings.GetString("Theme", "") ?? "",
+            recentColors = RhinoDockPlugin.Instance?.Settings.GetString("RecentColors", "") ?? "",
             solve = host.Solve is { } solve ? new { playing = solve.Playing, frame = solve.Frame, done = solve.Done, stalled = solve.Stalled,
                 rate = solve.Rate, fps = solve.FramesPerSecond, held = solve.Held } : null }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
         if (!force && snapshot == lastSnapshot) return;
@@ -441,15 +548,9 @@ public sealed class SingleScriptPanel : Panel, global::Rhino.UI.IPanel
         var linked = new List<string>();
         var chips = new List<string>();
         var session = host.Session;
-        if (script && session.Selected is { } selected)
+        if (script && AgentHost.Current.HostConnected && session.Selected is { } selected)
         {
-            var inputs = selected.Ports.Where(p => !p.IsOutput).Select(p =>
-                $"- {p.Name} ({PortTypeName.Element(p.TypeName).Split('.').Last()}{(p.Access == PortAccess.List ? " list" : "")}): "
-                + (host.Picked(p.Name)?.Label ?? FormatInput(session.Inputs.GetValueOrDefault(p.Name)) ?? "not set"));
-            var outputs = selected.Ports.Where(p => p.IsOutput).Select(p => $"- {p.Name} ({PortTypeName.Element(p.TypeName).Split('.').Last()})");
-            blocks.Add(("active-script", $"rhDock active Script: {selected.Name} ({selected.EntryFile}). rhDock reloads it when the file changes.\n"
-                + $"Inputs:\n{string.Join("\n", inputs)}\nOutputs:\n{string.Join("\n", outputs)}\n"
-                + $"Last result: {session.Result.Status}{(session.Result.Error is { Length: > 0 } error ? "\nError: " + error : "")}"));
+            blocks.Add(("active-script", HostTools.Serialize(host.ToolState())));
             linked.Add(Path.Combine(repository, selected.EntryFile));
             chips.Add(selected.Name);
         }
@@ -463,33 +564,48 @@ public sealed class SingleScriptPanel : Panel, global::Rhino.UI.IPanel
                     linked.Add(Path.Combine(repository, path));
                     chips.Add(mention.TryGetProperty("label", out var label) ? label.GetString() ?? path : path);
                 }
-                else if (kind == "selection" && RhinoDoc.ActiveDoc is { } doc)
+                else if (kind == "selection" && AgentHost.Current.HostConnected && RhinoDoc.ActiveDoc is { } doc)
                 {
-                    var selectedObjects = doc.Objects.GetSelectedObjects(false, false).Take(50).Select(o =>
-                        $"- {o.Id} on layer {doc.Layers[o.Attributes.LayerIndex].FullPath}: {GeometryVocabulary.Describe(o.Geometry)}").ToArray();
-                    blocks.Add(("selection", selectedObjects.Length == 0 ? "The Rhino selection is empty."
-                        : $"Objects selected in Rhino ({selectedObjects.Length}{(selectedObjects.Length == 50 ? " or more" : "")}):\n{string.Join("\n", selectedObjects)}"));
+                    blocks.Add(("selection", HostTools.Serialize(new { document = doc.RuntimeSerialNumber,
+                        selection = global::rhDock.RhinoAI.Tools.GetContextTool.SelectionOf(doc) })));
                     chips.Add("Rhino selection");
                 }
             }
         return (blocks, linked, chips.ToArray());
     }
 
-    // The active view as a PNG no larger than 1568 px, a size vision models accept without scaling.
     private void CaptureViewport()
     {
-        if (RhinoDoc.ActiveDoc?.Views.ActiveView is not { } view) { ShowError("There is no active viewport to capture."); return; }
-        var size = view.ActiveViewport.Size;
-        var scale = Math.Min(1.0, 1568.0 / Math.Max(1, Math.Max(size.Width, size.Height)));
-        using var bitmap = view.CaptureToBitmap(new System.Drawing.Size((int)(size.Width * scale), (int)(size.Height * scale)));
-        if (bitmap is null) { ShowError("Rhino could not capture the viewport."); return; }
-        using var png = new MemoryStream();
-        bitmap.Save(png, System.Drawing.Imaging.ImageFormat.Png);
-        var data = Convert.ToBase64String(png.ToArray());
-        using var small = view.CaptureToBitmap(new System.Drawing.Size(160, Math.Max(1, 160 * bitmap.Height / Math.Max(1, bitmap.Width))));
-        using var jpeg = new MemoryStream();
-        small?.Save(jpeg, System.Drawing.Imaging.ImageFormat.Jpeg);
-        AgentHost.Current.Attach($"{view.ActiveViewport.Name} viewport.png", "image/png", data, null, jpeg.Length > 0 ? "data:image/jpeg;base64," + Convert.ToBase64String(jpeg.ToArray()) : null);
+        if (!AgentHost.Current.HostConnected || RhinoDoc.ActiveDoc is not { } doc) return;
+        var result = global::rhDock.RhinoAI.Tools.GetViewportImageTool.GetViewportImage(doc);
+        if (result.IsFailure) { ShowError(result.Message ?? result.Error ?? "Viewport capture failed."); return; }
+        var metadata = string.Join("\n", result.Attachments.Where(a => a.Type == "text").Select(a => a.Text));
+        foreach (var image in result.Attachments.Where(a => a.Type == "image"))
+            AgentHost.Current.Attach("Rhino viewport.jpg", image.MimeType, image.Data, null,
+                "data:" + image.MimeType + ";base64," + image.Data, metadata);
+    }
+
+    // Document and media types a reply link may open in their default app; anything else, an app or a script included, is only shown
+    // in Finder or Explorer, so a link an agent wrote never runs a program.
+    private static readonly HashSet<string> OpenableTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".mov", ".mp4", ".m4v", ".webm", ".avi", ".mkv", ".gif", ".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".bmp", ".svg",
+        ".mp3", ".wav", ".m4a", ".pdf", ".txt", ".md", ".csv", ".json", ".3dm",
+    };
+
+    /// <summary>A link to a local file (an absolute path or file:// URL) in an agent reply: opened when it is a document or media file, else revealed.</summary>
+    private static void OpenLocalFile(string link)
+    {
+        try
+        {
+            var path = link.StartsWith("file://", StringComparison.OrdinalIgnoreCase) ? new Uri(link).LocalPath : Uri.UnescapeDataString(link);
+            if (!Path.IsPathFullyQualified(path) || !File.Exists(path)) return;
+            if (OpenableTypes.Contains(Path.GetExtension(path)) && new FileInfo(path).LinkTarget is null)
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true });
+            else if (OperatingSystem.IsWindows()) System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{path}\"");
+            else System.Diagnostics.Process.Start("open", ["-R", path]);
+        }
+        catch (Exception ex) when (ex is UriFormatException or ArgumentException or System.ComponentModel.Win32Exception or IOException) { HostLog.Write("reply link not opened: " + ex.GetType().Name); }
     }
 
     private static string? Scalar(object? value) => value switch
@@ -511,7 +627,9 @@ public sealed class SingleScriptPanel : Panel, global::Rhino.UI.IPanel
     private object StyleSnapshot(string name, string? family, bool input)
     {
         var style = host.ResolvedStyle(name, family, input);
-        return new { color = style.Color, custom = style.Custom, weight = style.Weight, size = style.Size, shading = style.Shading };
+        return new { color = style.Color, custom = style.Custom, weight = style.Weight, size = style.Size, shading = style.Shading,
+            edges = new { color = style.Color, custom = style.Custom, opacity = style.EdgeOpacity },
+            fill = new { color = style.FillColor, custom = style.FillCustom, opacity = style.Shading } };
     }
 
     private static string? FormatInput(object? value) => value is IEnumerable list and not string

@@ -2,7 +2,7 @@
 
 ## Prerequisites and build
 
-Use the .NET 8 SDK and Node.js 22 with npm. Rhino 8 using .NET 8 is required for live validation and Yak packaging. The frontend is React/TypeScript with Vite, Tailwind, and shadcn/ui.
+Use the .NET 8 SDK and Node.js 22 with npm. Rhino 8.31 or later using .NET 8 is required for live validation and Yak packaging. The frontend is React/TypeScript with Vite, Tailwind, and shadcn/ui.
 
 From the repository root:
 
@@ -47,7 +47,7 @@ Live agent checks use `--agent <id>` or `--agent-host <id>`. They invoke an inst
 
 ## Browser preview and mirror
 
-Run `npm run dev` in `frontend/` for a sample-data browser preview. `?agent-stress=1` supplies a long-message layout fixture. Neither exercises native Rhino interaction.
+Run `npm run dev` in `frontend/` for a sample-data browser preview. `?agent-stress=1` supplies a long-message layout fixture; `?history-stress=1` supplies 500 messages for backward paging and bounded-body rendering. Neither exercises native Rhino interaction.
 
 For a live mirror, start Vite, open the panel in Rhino, run `RhinoDockMirror`, and enter Vite's port. Open the same loopback URL with `?mirror=1`. Browser controls act on the real Rhino document. Use one Rhino per port and keep the server on loopback. Run the command again to stop; closing or hiding the panel also stops the mirror.
 
@@ -59,7 +59,7 @@ After restoring and building:
 dotnet msbuild tools/package-yak.proj
 ```
 
-The target validates plugin identity, assembles binaries and license notices, and builds a local `.yak` in `.artifacts/yak/`. It uses Rhino 8's Yak tool at its standard installation path; override `YakPath` for a custom installation. Keep the version in `src/rhDock.Rhino/rhDock.Rhino.csproj` and `tools/yak/manifest.yml` synchronized. This target does not publish.
+The target delegates to StageYak, validates matching versions and freshly built plugin/CLI hashes, includes license notices, and builds a local `.yak` in `.artifacts/yak/`. It uses Rhino 8's Yak tool at its standard installation path; override `YakPath` for a custom installation. Keep the version in `src/rhDock.Rhino/rhDock.Rhino.csproj` and `tools/yak/manifest.yml` synchronized. This target does not publish.
 
 Install either the Yak package or a direct `.rhp`, not both. Restart Rhino after installation. Existing assembly names and plugin GUID must remain stable.
 
@@ -80,3 +80,17 @@ In the pull request, state platform, Rhino version, revision, expected/actual re
 ## Repository hygiene
 
 Run `git diff --check`. CI also checks English repository content, builds the production frontend and .NET solution, and runs portable smoke checks. Do not commit generated outputs, local CLI configuration, logs, credentials, or `.rhdock/`.
+
+## Additional panel and host checks
+
+The frontend includes `check:script-controls`, `check:lists`, and `check:theme`; Trace activity checks run with `node scripts/check-activity.mjs`. Host access and CLI catalog checks use:
+
+```sh
+dotnet run --project tools/smoke/smoke.csproj -c Release --no-build -- --host-tools src/rhDock.Cli/bin/Release/net8.0/rhdock.dll src/rhDock.Rhino/bin/Release/net8.0/rhDock.Rhino.rhp
+```
+
+Keep native acceptance separate: panel focus versus Rhino Undo/Redo; independent input/output master preview; automatic mesh colors versus custom fill/edges and opacity; enum clearing; history prepend/selection; and concurrent Rhino instances. See [publishing](publishing.md) for the maintainer's PowerShell release flow.
+
+## Source snapshots
+
+`snapshot.json` records the source revision, selected source/build file hashes, and public-specific adaptations. Public guides, workflows, manifest URL, and licensing files are maintained in this repository. Source snapshots append to this repository's history rather than importing a separate development history.

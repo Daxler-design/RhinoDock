@@ -11,6 +11,10 @@ public sealed class RhinoDockPlugin : PlugIn
 
     protected override LoadReturnCode OnLoad(ref string errorMessage)
     {
+        HostTools.Initialize();
+        DocumentSaveDiagnostics.Start();
+        global::Rhino.RhinoDoc.ActiveDocumentChanged += OnActiveDocumentChanged;
+        global::Rhino.RhinoDoc.CloseDocument += OnCloseDocument;
         HostLog.Write($"start pid={Environment.ProcessId} version={typeof(RhinoDockPlugin).Assembly.GetName().Version}");
         AppDomain.CurrentDomain.UnhandledException += (_, e) => HostLog.Fatal(e.ExceptionObject);
         global::Rhino.UI.Panels.RegisterPanel(this, typeof(SingleScriptPanel), "rhDock",
@@ -26,8 +30,19 @@ public sealed class RhinoDockPlugin : PlugIn
         return LoadReturnCode.Success;
     }
 
+    private static void OnActiveDocumentChanged(object? sender, global::Rhino.DocumentEventArgs e) => AgentHost.RevokeHostConnections();
+
+    private static void OnCloseDocument(object? sender, global::Rhino.DocumentEventArgs e)
+    {
+        if (SingleScriptHost.Current.BoundDocument?.RuntimeSerialNumber == e.DocumentSerialNumber)
+            AgentHost.RevokeHostConnections();
+    }
+
     protected override void OnShutdown()
     {
+        DocumentSaveDiagnostics.Stop();
+        global::Rhino.RhinoDoc.ActiveDocumentChanged -= OnActiveDocumentChanged;
+        global::Rhino.RhinoDoc.CloseDocument -= OnCloseDocument;
         MirrorServer.Stop();
         Extensions.ExtensionHost.Shutdown();
         AgentHost.Shutdown();

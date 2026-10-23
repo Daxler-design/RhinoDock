@@ -21,7 +21,9 @@ public sealed record ScriptInfo(string Path, string Name, string Category, IRead
 public sealed class ExtensionScripts
 {
     private readonly ExtensionContext owner;
-    private readonly Dictionary<string, Action<string>> editors = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Action<string, int?>> editors = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, (string Kind, Func<object?, string> Format, Func<string, object?> Parse)> inlineEditors = new(StringComparer.Ordinal);
+    private readonly HashSet<string> listEditors = new(StringComparer.Ordinal);
     private bool retired;
 
     internal ExtensionScripts(ExtensionContext owner) => this.owner = owner;
@@ -30,6 +32,36 @@ public sealed class ExtensionScripts
 
     /// <summary>Raised on the UI queue after the Session changed: Script list, selection, inputs, a Run, or its result.</summary>
     public event Action? Changed;
+
+    /// <summary>Raised synchronously after an explicit list move; matching other inputs is the Extension's choice.</summary>
+    public event Action<ScriptInputReorder>? Reordered;
+
+    /// <summary>The input row active in the panel or viewport; null when no row is active.</summary>
+    public ScriptInputItem? ActiveItem => Host.ActiveItem;
+
+    /// <summary>False after document closure or while another document is active.</summary>
+    public bool HasDocument => Host.HasDocument;
+
+    /// <summary>Changes when the repository, selected Script, or compiled source generation changes.</summary>
+    public int Revision => Host.Revision;
+
+    /// <summary>Activates a row without selecting geometry. Null clears the active row.</summary>
+    public void SetActiveItem(string? name, int? index = null) { Check(); Host.SetActiveItem(name, index); }
+
+    /// <summary>Edits one element through SetInput, retaining the whole typed list and adaptive Auto scheduling.</summary>
+    public void SetInputItem(string name, int index, object? value)
+    {
+        Check();
+        if (Host.Session.Selected?.Ports.Any(p => p.Name == name && !p.IsOutput && p.Access == PortAccess.List) != true
+            || Input(name) is not System.Collections.IEnumerable items || items is string)
+            throw new ArgumentException("No list input named " + name, nameof(name));
+        if (!BoundaryValues.TryCopy(value, Duplicate, out var copy))
+            throw new ArgumentException("Extension and Script types cannot cross.", nameof(value));
+        SetInput(name, InputItems.Replace(items, index, copy));
+    }
+
+    /// <summary>Moves an input list row and raises Reordered. No other input is matched automatically.</summary>
+    public void ReorderInput(string name, int from, int to) { Check(); Host.ReorderInput(name, from, to); Host.Refresh(); }
 
     /// <summary>The open Working Repo, or null.</summary>
     public string? Repository => Host.Session.Repository;
@@ -95,16 +127,69 @@ public sealed class ExtensionScripts
         Check();
         if (!BoundaryValues.CanCross(type))
             throw new ArgumentException("Editors handle .NET or RhinoCommon types; a Script cannot see Extension types.", nameof(type));
-        editors[type.FullName!] = edit;
+        editors[type.FullName!] = (name, _) => edit(name);
+        inlineEditors.Remove(type.FullName!);
+        listEditors.Remove(type.FullName!);
         Host.RefreshPanel();
     }
 
-    internal bool Edits(string typeName) => editors.ContainsKey(typeName);
-
-    internal void Edit(string typeName, string input)
+    /// <summary>An Edit action for a single value (null index) or one list element. Use SetInputItem for list edits.</summary>
+    public void RegisterEditor(Type type, Action<string, int?> edit)
     {
-        if (editors.TryGetValue(typeName, out var edit)) owner.Guard("input editor", () => edit(input));
+        Check();
+        if (!BoundaryValues.CanCross(type)) throw new ArgumentException("Extension and Script types cannot be edited.", nameof(type));
+        editors[type.FullName!] = edit;
+        inlineEditors.Remove(type.FullName!);
+        listEditors.Add(type.FullName!);
+        Host.RefreshPanel();
     }
+
+    /// <summary>
+    /// Embeds a host control (number, int, text, boolean, or color) for single values and list elements.
+    /// Format and parse use invariant text; parsed values must match the registered .NET or RhinoCommon type.
+    /// No Extension objects or callbacks are saved. Retirement restores the ordinary panel control.
+    /// </summary>
+    public void RegisterEditor(Type type, string control, Func<object?, string> format, Func<string, object?> parse)
+    {
+        Check();
+        if (!BoundaryValues.CanCross(type)) throw new ArgumentException("Extension and Script types cannot be edited.", nameof(type));
+        if (control is not ("number" or "int" or "text" or "boolean" or "color")) throw new ArgumentException("Unknown input control.", nameof(control));
+        inlineEditors[type.FullName!] = (control, format, parse);
+        editors.Remove(type.FullName!);
+        listEditors.Add(type.FullName!);
+        Host.RefreshPanel();
+    }
+
+    internal bool Edits(string typeName, bool list = false) => (!list || listEditors.Contains(typeName)) && (editors.ContainsKey(typeName) || inlineEditors.ContainsKey(typeName));
+    internal string? Control(string typeName) => inlineEditors.TryGetValue(typeName, out var editor) ? editor.Kind : null;
+    internal string? Format(string typeName, object? value)
+    {
+        string? text = null;
+        if (inlineEditors.TryGetValue(typeName, out var editor)) owner.Guard("input format", () => text = editor.Format(value));
+        return text;
+    }
+
+    internal void Parse(string typeName, string input, int? index, string text)
+    {
+        if (inlineEditors.TryGetValue(typeName, out var editor)) owner.Guard("input parse", () =>
+        {
+            var value = editor.Parse(text);
+            if (index is { } i) SetInputItem(input, i, value); else SetInput(input, value);
+        });
+    }
+
+    internal void ParseList(string typeName, string input, string[] text)
+    {
+        if (inlineEditors.TryGetValue(typeName, out var editor))
+            owner.Guard("input parse", () => SetInput(input, text.Select(editor.Parse).ToArray()));
+    }
+
+    internal void Edit(string typeName, string input, int? index)
+    {
+        if (editors.TryGetValue(typeName, out var edit)) owner.Guard("input editor", () => edit(input, index));
+    }
+
+    internal void RaiseReordered(ScriptInputReorder move) => owner.Guard("Scripts.Reordered", () => Reordered?.Invoke(move));
 
     internal bool Wanted => Changed is not null;
     internal void Raise() => owner.Guard("Scripts.Changed", () => Changed?.Invoke());
@@ -113,7 +198,10 @@ public sealed class ExtensionScripts
     {
         retired = true;
         Changed = null;
+        Reordered = null;
         editors.Clear();
+        inlineEditors.Clear();
+        listEditors.Clear();
     }
 
     private void Check() => ObjectDisposedException.ThrowIf(retired, this);

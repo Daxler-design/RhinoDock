@@ -1,0 +1,226 @@
+[
+  {
+    "path": "Tools/SaveDocTool.cs",
+    "sha256": "7706927ebcb1bcc406c7ef897047fe45d543e86d05a2a580217cbd22101e2890"
+  },
+  {
+    "path": "Tools/SetLayerMaterialTool.cs",
+    "sha256": "96a0110d08638f20aab19e9ba6097f6b552915547334af2062a8e1e4b8149426"
+  },
+  {
+    "path": "Tools/OpenDocTool.cs",
+    "sha256": "8bcc5d3a80311057eed9e16dae84532b399962d1ac0456e36a32b137cc298524"
+  },
+  {
+    "path": "Tools/GetContextTool.ai.cs",
+    "sha256": "5e2ed4813889e114379b699fdbe44ad0d52189f2a749cfb4180a5cec5bc55a83"
+  },
+  {
+    "path": "Tools/RunPythonTool.cs",
+    "sha256": "142379a51bd1be0fe8dfd4ce4d8e910fc368b22e588fd50112c45d966ffb4c81"
+  },
+  {
+    "path": "Tools/Rewiring.ai.cs",
+    "sha256": "a416c786bcda00d55939972b188150674f7191cb068776ea68c14dc0e43addcb"
+  },
+  {
+    "path": "Tools/GetViewportImageTool.cs",
+    "sha256": "f252c29d7e0ce597e46e4aff4dbbef7448b6aa6d386182a9e02cf43923796a70"
+  },
+  {
+    "path": "Tools/RunCSharpTool.cs",
+    "sha256": "dba6f16dcc33006342a33d9d4aa36c5543464e917e4f48efb2055f74165ffd38"
+  },
+  {
+    "path": "Tools/SetSelectionTool.cs",
+    "sha256": "0a7e6a1c242b7570cdd171b89fc766eca58c2d14afbb205322a2f10dc54e2384"
+  },
+  {
+    "path": "Tools/AskUserQuestion.ai.cs",
+    "sha256": "10f4f08b8bba6c0c12d0c54832f1ef44bb225055bf6942668c11db7642c21e50"
+  },
+  {
+    "path": "Tools/SetCameraTool.cs",
+    "sha256": "59db2b2c05961b41904e60cfb6f2b4ae88db41082391261e75c26fec7cf6e1de"
+  },
+  {
+    "path": "Tools/CloseDocTool.cs",
+    "sha256": "978ec820652ed4c599d93f7046ef4784e2e189bbeb8413008de439e111eae915"
+  },
+  {
+    "path": "Tools/ZoomToObjectTool.cs",
+    "sha256": "f6dc0fa0e709bab930f70532a4b6fe8a00d395aa97bd2d0181eefd44e85ad65f"
+  },
+  {
+    "path": "Tools/ZoomToLayerTool.cs",
+    "sha256": "4e0575c1cbffe1f7539221ef4cb8dfc4f256cf29905d1eb819fa71fe8b32bbfe"
+  },
+  {
+    "path": "Tools/QuestionReply.ai.cs",
+    "sha256": "a2d3a123ab6cccc094ee5ccc35d204f256d389150c5734f2e8b8ae1ecb4b557b"
+  },
+  {
+    "path": "Tools/Coercions.cs",
+    "sha256": "68cc53f79bae5fa54b00f56ca4ec165bb18d2e5074b983288f14db3eb920c3ce"
+  },
+  {
+    "path": "Tools/GrasshopperSummary.cs",
+    "sha256": "1390c83d5269c9c6c46cacc20c5f7bed1a860e3e29a37d3ceaf0d3a13db11827"
+  },
+  {
+    "path": "Tools/BackgroundThreadAttribute.cs",
+    "sha256": "0109197b313291d921a142af743df39e380b2fdd241053555031fd8796f1c915"
+  },
+  {
+    "path": "Tools/ListObjectsTool.cs",
+    "sha256": "05b3519a0eeeae0e23b135d9a486350033761cab15e73bad40a131c3174fd051"
+  },
+  {
+    "path": "Tools/InPanelOnlyAttribute.cs",
+    "sha256": "8b6da205c6ef4f9ababc0fa8c1f50ec9ab5a469b927a0480f4a01f5cd6126db4"
+  },
+  {
+    "path": "Tools/ToolResult.cs",
+    "sha256": "15d9036cd2e41b19e6dbfaf4961cdf49ad09567bf18d56dd71a29d53215d8c47"
+  },
+  {
+    "path": "Tools/RunCommandTool.cs",
+    "sha256": "876b1bc2e9c5006df8298bc8486f9afffb69fde38f88ea40d666718db311b3cf"
+  },
+  {
+    "path": "Tools/CreateTool.cs",
+    "sha256": "8c442ce5d64e115d5ce6bd532264ef5220497c232f2d761f7a96133157de469e"
+  },
+  {
+    "path": "Tools/GetSelectionTool.cs",
+    "sha256": "207d6f606d48410e7bd997fa310d68bad3b1a57cdc8b80aaebca205a029b3eaf"
+  },
+  {
+    "path": "Tools/Refusals.cs",
+    "sha256": "2c5df97137f03c42ef5484c40caaf88ac69e0c9b2b516191dfbdc93498355257"
+  },
+  {
+    "path": "Tools/GetCommandsTool.cs",
+    "sha256": "a2768ea0c671f0b8d212872986881949dd8e0f4c73aee6d5153c0a58df6a351d"
+  },
+  {
+    "path": "Tools/GH1/GH1_PlaceSliderTool.cs",
+    "sha256": "efbd5a692c6dae32a538f804963bb7ceaa3b7b6e914fb2f0806a4e7499c0c953"
+  },
+  {
+    "path": "Tools/GH1/GH1_DescribeComponentTool.cs",
+    "sha256": "34f205e71202d18fbf884e9f68d4714f75167dc7d6be4d4db3c7bffd0a31defc"
+  },
+  {
+    "path": "Tools/GH1/GH1_SolveTool.cs",
+    "sha256": "12a3c2a5740cdb39aba586d7dd18f7e4e40f534b97b2788ec8866700757222f4"
+  },
+  {
+    "path": "Tools/GH1/GH1_DeleteComponentTool.cs",
+    "sha256": "d4a71cba7ee7e0cf432ca8fd251662a623d6d029cc4e783830d14068ffbc0e44"
+  },
+  {
+    "path": "Tools/GH1/GH1_PlaceComponentTool.cs",
+    "sha256": "d6dbc208f0ab4fa8b521b68fa1ba7210236263577b7c9f6a5b81ee096c94b913"
+  },
+  {
+    "path": "Tools/GH1/GH1_GetCanvasGraphTool.cs",
+    "sha256": "6de968473a04ffbacf301c9d7c16aa2a764e398cfc3f46427f1782d35e5f4d16"
+  },
+  {
+    "path": "Tools/GH1/GH1_ConnectTool.cs",
+    "sha256": "c764ff3efe69bd3b0d42bfb4f5a54c144325984211946ee580ca6eb796ee995f"
+  },
+  {
+    "path": "Tools/GH1/GH1_ConnectManyTool.cs",
+    "sha256": "aede771c31dde11c9b63f3407a165178e060a955147d2f5944722e2bbb9346f5"
+  },
+  {
+    "path": "Tools/GH1/GH1_SearchComponentsTool.cs",
+    "sha256": "a06e3570081718669917c8ecc94a8eff8a9708fe98b5c3e723e987db3dc68c05"
+  },
+  {
+    "path": "Tools/GH1/GH1_StartTool.cs",
+    "sha256": "60431183b0150546b443944cb9d35c80f78debe2d51e68bc32211619bae39ebc"
+  },
+  {
+    "path": "Tools/GH1/GH1_ClearCanvasTool.cs",
+    "sha256": "5d5f95bbe4f57f579ca42000d4e679f4b8a7f39c09fe3bc7e6f4c5bce8d3d0bf"
+  },
+  {
+    "path": "Tools/GH1/GH1_ApplyGraphTool.cs",
+    "sha256": "82b359c3d3cfec73dd2f12cdbbc5aca13689579ae234a9971ee3358e1f4a896a"
+  },
+  {
+    "path": "Tools/GH1/GH1_Failures.cs",
+    "sha256": "e81ed037b85709ea7560588983f56e1e736a74362a6050c4d9f81e99d0e11a87"
+  },
+  {
+    "path": "Resources/GH1/GH1_GraphOps.cs",
+    "sha256": "856bb23d9bd1c9f8422b2186f2e13a13f699696a71f531e81bbca115d3e53b22"
+  },
+  {
+    "path": "Resources/GH1/GH1_Utils.cs",
+    "sha256": "a7d5bb68b7ba023a5d8c4d7e8bce7dd13cff8d907dce3a56d5f207e6e6990911"
+  },
+  {
+    "path": "Resources/GH1/GH1_ProxyResolver.cs",
+    "sha256": "b58ecc3cf77f649d506c24b67356d87a14acba558e891d55753bb680c88bd68f"
+  },
+  {
+    "path": "Server/ToolRegistry.ai.cs",
+    "sha256": "1ba2eaa202f12468475a20beb4a9ea035d44770a8ecee55cacdce467b97bb332"
+  },
+  {
+    "path": "Server/ResourceRegistry.ai.cs",
+    "sha256": "83aac32d733664b7adbf03a0b722e601198c3d126c46205c1fe8551337fe6d2a"
+  },
+  {
+    "path": "Server/ToolResultFormatter.ai.cs",
+    "sha256": "adab42567e7dc840ab51a883787f7ef62691aaa9a68545a7e83510084d90e0ec"
+  },
+  {
+    "path": "Server/ParameterBinder.ai.cs",
+    "sha256": "60a2b2c2d5481eafa426b2543ff712dda78363aa94e32b335f88c9bf913078ff"
+  },
+  {
+    "path": "Server/Attributes.ai.cs",
+    "sha256": "f367f623bff5ba97fc111025fa58fb7e68c334be31005d2737c4237dac25019a"
+  },
+  {
+    "path": "Server/Protocol.ai.cs",
+    "sha256": "c35e1e2a83247cf112ccb4675a30065d8d3987a807f283b9e251f935ac45466e"
+  },
+  {
+    "path": "Server/SchemaBuilder.ai.cs",
+    "sha256": "b09a6e89735822c2f6e78fc7faa6bd40575f341d79fc1f15f8bb92bfac7e294c"
+  },
+  {
+    "path": "Server/BindNotes.ai.cs",
+    "sha256": "08d7414a6f8ebf4f807f0cdf23dc492ce818a3982c5630847afb88d1c5415768"
+  },
+  {
+    "path": "Server/BindingFailure.cs",
+    "sha256": "1d3049ac19d219c7299e8ac040fc7cdbc6a64c9b53725e8fb2b13382700c79e6"
+  },
+  {
+    "path": "DocumentServices.cs",
+    "sha256": "9a8e10d982de846eea44c2961e95f298b6f0c647231488de72d990ad433e6fc8"
+  },
+  {
+    "path": "ScriptProjects/RhinoAppRunScript.cs",
+    "sha256": "dfd33215e5061210a4f59707ce0f11514ccd3ce22bfff54e783829e36c64c819"
+  },
+  {
+    "path": "src/Resources/HostEnvironmentResource.cs",
+    "sha256": "90f9326ceeba76e211c0b36444dea49f1ecc61efdf127fd838f4ff5fdad3e294"
+  },
+  {
+    "path": "src/Resources/InstalledPluginsResource.cs",
+    "sha256": "4228c84d9c846fee9483b23b53d99526125f19da3aaa5423c7c2ef27ca8fda54"
+  },
+  {
+    "path": "src/Resources/CommandHelpResource.cs",
+    "sha256": "f8be9c766194d872a6aea78477b1c221f8a20a6ce43b6c2e825121b003b13d32"
+  }
+]

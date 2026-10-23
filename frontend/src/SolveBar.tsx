@@ -19,7 +19,7 @@ export function SolveBar({ snap, solve, act, openConsole }: { snap: Snapshot; so
     <button className={`status st-${phase === 'held' ? 'pending' : phase === 'solving' ? 'running' : phase === 'done' ? 'completed' : phase === 'paused' ? 'pending' : phase === 'error' ? 'error' : 'ready'}`} onClick={openConsole} title={solve.playing && solve.fps ? `${solve.fps} frames per second` : solve.stalled ? 'Stopped: outputs no longer change' : solve.done ? 'The Script set Done' : undefined}>
       <span className={`st-dot ${phase === 'solving' ? 'pulsing' : ''}`}/><span className="st-label">{label}</span>{meta && <span className="st-meta">{meta}</span>}
     </button>
-    <button className="auto" aria-pressed={snap.auto} title="Auto: restart the Solve when an input changes" onClick={() => act({ action: 'auto', value: !snap.auto })}><span className={`switch ${snap.auto ? 'on' : ''}`}><span className="knob"/></span>Auto</button>
+    <button className="auto" aria-pressed={snap.auto} title="Auto: restart the Solve when an input changes" onClick={() => act({ action: 'auto', value: !snap.auto })}><span className={`switch ${snap.auto ? 'on' : ''}`}><span className="knob"/></span><span className="auto-label">Auto</span></button>
     <div className="rate-wrap">
       <button className="rate" title="Frame rate limit" aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu(!menu)}>{rateLabel(solve.rate)}</button>
       {menu && <><div className="scrim clear" onClick={() => setMenu(false)}/><div className="rate-menu" role="menu">
@@ -28,8 +28,8 @@ export function SolveBar({ snap, solve, act, openConsole }: { snap: Snapshot; so
     </div>
     <button className="tb" title="Reset: discard the Solve" aria-label="Reset the Solve" disabled={busy || (!solve.playing && solve.frame === 0)} onClick={() => act({ action: 'resetSolve' })}><RotateCcw size={15}/></button>
     <button className="tb" title="Step one frame" aria-label="Step one frame" disabled={busy || solve.playing || finished} onClick={() => act({ action: 'step' })}><SkipForward size={15}/></button>
-    <button className="run" disabled={busy || !snap.selected || (!solve.playing && finished)} onClick={() => act({ action: solve.playing ? 'pause' : 'play' })}>
-      {solve.playing ? <Pause size={13} fill="currentColor"/> : <Play size={13} fill="currentColor"/>}{solve.playing ? 'Pause' : finished ? 'Solved' : solve.frame > 0 ? 'Resume' : 'Solve'}
+    <button className="run" aria-label={solve.playing ? 'Pause' : 'Solve'} disabled={busy || !snap.selected || (!solve.playing && finished)} onClick={() => act({ action: solve.playing ? 'pause' : 'play' })}>
+      {solve.playing ? <Pause size={13} fill="currentColor"/> : <Play size={13} fill="currentColor"/>}<span className="run-label">{solve.playing ? 'Pause' : finished ? 'Solved' : solve.frame > 0 ? 'Resume' : 'Solve'}</span>
     </button>
   </footer>;
 }

@@ -20,3 +20,5 @@ In Rhino on macOS, use Safari → Develop → your Rhino entry → the window ti
 ## Breakpoints
 
 Start Rhino with `RHDOCK_DEBUG=1` so Scripts and Extensions compile unoptimized with embedded symbols and sources. Then attach a .NET debugger to Rhino. `dotnet build` in an Extension folder only type-checks; RhinoDock never uses its output.
+
+Save diagnostics record save-event boundaries and document state without opening model files or changing save/lock settings. WebView layout diagnostics record process, viewport, parent/surface rectangles, and DPI at startup. These records help investigation and do not prove that a save succeeded or a display defect is fixed. Sanitize paths and identifiers before sharing logs.

@@ -36,7 +36,12 @@ public sealed partial class ClaudeCode
             case "system":
                 switch (Str(line, "subtype"))
                 {
-                    case "init": current.Model = Str(line, "model"); break;
+                    case "init":
+                        current.Model = Str(line, "model");
+                        // A session that asks for Auto where it is unavailable starts in another mode without an error; read the mode back.
+                        if (conversations.TryGetValue(sid, out var started) && started.Mode == "auto" && Str(line, "permissionMode") is { Length: > 0 } actual && actual != "auto")
+                        { started.Mode = "ask"; Emit(new ModeUnavailable(sid, "auto", $"Claude Code started in {actual} mode instead of Auto (account, model, or policy)")); }
+                        break;
                     case "compact_boundary": Emit(new Notice(sid, "Compacted the conversation.")); break;
                     case "api_retry": Emit(new Notice(sid, $"Retrying after a provider error (attempt {Num(line, "attempt")}).")); break;
                 }
@@ -112,7 +117,7 @@ public sealed partial class ClaudeCode
             var text = Str(block, "content") ?? string.Join("\n", Arr(block, "content").Select(p => Str(p, "text")).OfType<string>());
             var failed = Bool(block, "is_error");
             var (kind, title, _) = ToolPreview.Describe(tool.Name, tool.Input);
-            Emit(new ToolCall(sid, id, title, kind, failed ? "Failed" : "Completed", Detail(tool.Name, tool.Input, structured, text), null, parent));
+            Emit(new ToolCall(sid, id, title, kind, failed ? "Failed" : "Completed", Detail(tool.Name, tool.Input, structured, text), null, parent, ToolImages.In(Arr(block, "content"), title)));
             if (!failed && parent is null && TrackTask(tool.Name, tool.Input, text)) Emit(new PlanUpdate(sid, tasks.Select(t => (t.Status, t.Text)).ToArray()));
         }
     }

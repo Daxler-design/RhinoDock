@@ -4,7 +4,7 @@ This repository holds rhDock Extensions for Rhino 8: C# code that rhDock compile
 
 ## Layout
 
-- Each top-level folder with a `.csproj` is one Extension; the folder name is its name. Create one from the rhDock panel (Extensions tab → New Extension) so it starts from the current template.
+- Each top-level folder with a `.csproj` is one Extension; the folder name is its name. Create further Extensions directly in folders, yourself or with an agent. A new repo starts with ViewportSliders; its README explains the companion Script setup.
 - An Extension folder holds the `.csproj`, C# sources, and optionally web pages with `rhdock.js`. Shared code between Extensions is not supported; copy what you need.
 - `Directory.Build.props` is written by rhDock for IDE completion and is not version-controlled.
 
@@ -25,6 +25,8 @@ This repository holds rhDock Extensions for Rhino 8: C# code that rhDock compile
 - Handlers run on the Rhino UI thread. Exceptions in `Activate`, handlers, and `Dispose` are caught and reported.
 - `rh.Scripts` is the rhDock panel's Script Session; calls take the same path as the panel, so the panel and the Workspace follow. `List()` and `Selected` give Scripts with their ports (`Kind` is how the panel edits an input: number, int, text, boolean, list, color, pick, extension, unsupported). `Select(path)`, `SetInput(name, value)`, and `Run()` act like the panel. `Input(name)` and `Output(name)` return copies. `Status` and `Error` describe the last Run. `Changed` fires on the UI queue after any Session change; it needs no cleanup.
 - `rh.Scripts.RegisterEditor(type, edit)` gives Script inputs of a .NET or RhinoCommon type that the panel cannot edit an Edit button; `edit(inputName)` typically opens a view and calls `SetInput`. Values persist when the Workspace can store them (scalars, colors, `DateTime`, `Guid`).
+- Indexed editors use `RegisterEditor(type, (name, index) => ...)`: null index means a single value; list items are applied with `SetInputItem(name, index, value)`. Inline editors use `RegisterEditor(type, control, format, parse)`, with an existing `number`, `int`, `text`, `boolean`, or `color` control and invariant text. Parsed values must fit the registered type. Registrations end at retirement; parse errors are logged and keep the committed value.
+- `ActiveItem` / `SetActiveItem(name, index)` synchronize active rows without selecting geometry. `ReorderInput(name, from, to)` preserves pick bindings and raises `Reordered` synchronously; explicitly update related inputs in that handler when your workflow requires it. rhDock never matches other inputs automatically. `HasDocument` and `Revision` let viewport tools reject stale interaction after document, Script, or source changes. Active rows are not saved.
 - `rh.StartProcess(info)` starts a process that rhDock ends, with its children, when the generation is retired or Rhino closes.
 
 ## What an Extension may use

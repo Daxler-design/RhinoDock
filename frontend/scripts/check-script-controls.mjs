@@ -1,0 +1,17 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
+import ts from 'typescript';
+const source = readFileSync(new URL('../src/scriptHistory.ts', import.meta.url), 'utf8');
+const exports = {};
+vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText, { exports });
+const key = (key, extra = {}) => ({ key, ctrlKey: true, metaKey: false, altKey: false, shiftKey: false, defaultPrevented: false, ...extra });
+assert.equal(exports.scriptHistoryAction(key('z'), false), 'undoInput');
+assert.equal(exports.scriptHistoryAction(key('y'), false), 'redoInput');
+assert.equal(exports.scriptHistoryAction(key('z', { shiftKey: true }), false), 'redoInput');
+assert.equal(exports.scriptHistoryAction(key('z', { ctrlKey: false, metaKey: true }), false), 'undoInput');
+assert.equal(exports.scriptHistoryAction(key('z'), true), undefined, 'text editors retain native undo');
+assert.equal(exports.scriptHistoryAction(key('z', { altKey: true }), false), undefined);
+assert.equal(exports.scriptHistoryAction(key('z', { defaultPrevented: true }), false), undefined);
+assert.equal(exports.scriptHistoryAction(key('z', { ctrlKey: false }), false), undefined);
+console.log('PASS: Script history shortcuts, native editing, and modifier handling.');

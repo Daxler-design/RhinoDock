@@ -1,21 +1,32 @@
-import type { Action, Agent, PreviewStyle, Snapshot, StyleEdit } from './types';
+import type { Action, Agent, AgentItem, PreviewStyle, Snapshot, StyleEdit } from './types';
 import { mock, mockAgent } from './mock';
 
-declare global { interface Window { eto?: { postMessage(message: string): void }; rhDockSnapshot?: (snapshot: Snapshot) => void; rhDockImage?: (id: number, url: string) => void } }
+declare global { interface Window { eto?: { postMessage(message: string): void }; rhDockSnapshot?: (snapshot: Snapshot) => void; rhDockImage?: (id: number, url: string | null, small?: boolean) => void; rhDockImagePath?: (path: string, url: string | null, small?: boolean) => void } }
 
-// Images stay out of snapshots: the host sends each one once, when the panel first shows it.
-const images = new Map<number, Promise<string>>();
-const waiting = new Map<number, (url: string) => void>();
-window.rhDockImage = (id, url) => { waiting.get(id)?.(url); waiting.delete(id); };
-export function image(id: number): Promise<string> {
-  let url = images.get(id);
+// Images stay out of snapshots: the host sends each one once, when the panel first shows it; small is a thumbnail of at most 400 px,
+// used in the conversation, and the full image is asked for only when the preview opens. A local image an agent named in its reply is
+// read only from the allowed folders, else the host answers null.
+type Key = string;
+const loaded = new Map<Key, Promise<string | null>>();
+const waiting = new Map<Key, (url: string | null) => void>();
+const keyOf = (kind: 'id' | 'path', ref: string | number, small: boolean) => `${kind}:${small ? 's' : 'f'}:${ref}`;
+const arrive = (key: Key, url: string | null) => { waiting.get(key)?.(url); waiting.delete(key); };
+window.rhDockImage = (id, url, small) => arrive(keyOf('id', id, !!small), url);
+window.rhDockImagePath = (path, url, small) => arrive(keyOf('path', path, !!small), url);
+// A mirrored page cannot receive the host's script calls, so it fetches images from the mirror server.
+const mirrorImage = (query: string) => fetch('__rhdock/mirror/image?' + query, { cache: 'no-store' }).then(r => r.json() as Promise<{ url: string | null }>).then(r => r.url).catch(() => null);
+function load(kind: 'id' | 'path', ref: string | number, small: boolean): Promise<string | null> {
+  const key = keyOf(kind, ref, small);
+  let url = loaded.get(key);
   if (!url) {
-    url = new Promise(resolve => waiting.set(id, resolve));
-    images.set(id, url);
-    send({ action: 'agentImage', value: id });
+    url = mirrorMode ? mirrorImage(`${kind}=${encodeURIComponent(String(ref))}${small ? '&small=1' : ''}`) : new Promise(resolve => waiting.set(key, resolve));
+    loaded.set(key, url);
+    if (!mirrorMode) send(kind === 'id' ? { action: 'agentImage', value: Number(ref), small } : { action: 'agentImagePath', value: String(ref), small });
   }
   return url;
 }
+export const imagePath = (path: string, small = false) => load('path', path, small);
+export const image = (id: number, small = false) => load('id', id, small);
 
 // The rhDock Mirror in Rhino and the Vite development relay both serve the panel with ?mirror=1 and the same endpoints.
 export const mirrorMode = !window.eto && /[?&]mirror(=|&|$)/.test(window.location?.search ?? '');
@@ -25,7 +36,10 @@ export function connect(receive: (snapshot: Snapshot) => void, disconnected: () 
   window.rhDockSnapshot = snapshot => { window.clearInterval(readyTimer); receive(snapshot); };
   if (!mirrorMode && (window.eto || !import.meta.env.DEV)) {
     // Eto may inject its bridge after React mounts. Retry until the host's first snapshot acknowledges readiness.
-    const ready = () => window.eto?.postMessage(JSON.stringify({ action: 'ready' }));
+    const ready = () => window.eto?.postMessage(JSON.stringify({ action: 'ready', viewport: {
+      width: window.innerWidth, height: window.innerHeight, dpr: window.devicePixelRatio,
+      scale: window.visualViewport?.scale,
+    } }));
     readyTimer = window.setInterval(ready, 100);
     ready();
   }
@@ -56,11 +70,18 @@ export function send(message: Action) {
   else if (mirrorMode) void fetch('__rhdock/mirror/action', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(message),
   }).catch(() => {});
-  else if (import.meta.env.DEV && message.action === 'agentImage') window.setTimeout(() => window.rhDockImage?.(Number(message.value), mockImage(Number(message.value))), 50);
+  else if (import.meta.env.DEV && message.action === 'agentImagePath') window.setTimeout(() => window.rhDockImagePath?.(String(message.value), String(message.value).includes('missing') ? null : mockImage(7), message.small), 50);
+  else if (import.meta.env.DEV && message.action === 'agentImage') window.setTimeout(() => window.rhDockImage?.(Number(message.value), mockImage(Number(message.value)), message.small), 50);
   else if (import.meta.env.DEV && message.action !== 'clientError') { mockState = applyMock(mockState, message); mockReceive?.(mockState); }
 }
 
 let mockState: Snapshot = { ...mock, agent: { ...mockAgent, status: 'idle' } };
+const historyFixture: AgentItem[] = import.meta.env.DEV && /[?&]history-stress=1/.test(window.location?.search ?? '')
+  ? Array.from({ length: 500 }, (_, i) => ({ id: i + 1, kind: i % 2 ? 'assistant' : 'user',
+    text: `History message ${i + 1}\n\n` + 'A retained passage for scrolling and selection. '.repeat(12),
+    files: [], chips: [], images: [], checkpoint: false })) : [];
+if (historyFixture.length) mockState = { ...mockState, agent: { ...mockAgent, status: 'ready',
+  items: historyFixture.slice(-100), history: { before: 401, hasMore: true, total: 500 } } };
 if (import.meta.env.DEV) window.setInterval(() => {
   const solve = mockState.solve;
   if (!solve?.playing) return;
@@ -93,6 +114,15 @@ function mockImage(id: number) {
 }
 
 function applyMock(state: Snapshot, action: Action): Snapshot {
+  if (action.action === 'activeItem') return { ...state, inputs: state.inputs.map(p => ({ ...p, activeIndex: p.name === action.name ? action.index ?? null : null })) };
+  if (action.action === 'inputItem') {
+    const inputs = state.inputs.map(p => {
+      if (p.name !== action.name || !p.items) return p;
+      const items = p.items.map((item, i) => i === action.index ? { ...item, label: String(action.value), value: String(action.value) } : item);
+      return { ...p, items, value: items.map(item => item.value ?? item.label).join(', ') };
+    });
+    return { ...state, inputs, outputs: [], status: 'pending' };
+  }
   const inputs = state.inputs.map(p => p.name !== action.name ? p : {
     ...p,
     ...(action.action === 'input' ? { value: action.value === null ? undefined : String(action.value) } : {}),
@@ -101,7 +131,11 @@ function applyMock(state: Snapshot, action: Action): Snapshot {
     ...(action.action === 'pstyle' && p.preview && typeof action.style === 'object' ? { preview: { ...p.preview, style: mockStyle(p.preview.style, action.style) } } : {}),
     ...(action.action === 'preview' && p.preview ? { preview: { ...p.preview, visible: !!action.visible } } : {}),
     ...(action.action === 'element' && p.items ? { items: p.items.map((item, i) => i === action.index ? { ...item, visible: !!action.visible } : item) } : {}),
-    ...(action.action === 'reorder' && p.items && action.from !== undefined && action.to !== undefined ? { items: move(p.items, action.from, action.to) } : {}),
+    ...(action.action === 'reorder' && p.items && action.from !== undefined && action.to !== undefined ? {
+      items: move(p.items, action.from, action.to),
+      ...(p.kind !== 'pick' ? { value: move(p.items, action.from, action.to).map(item => item.value ?? item.label).join(', ') } : {}),
+      activeIndex: p.activeIndex == null ? null : move(p.items.map((_, i) => i), action.from, action.to).indexOf(p.activeIndex),
+    } : {}),
     ...(action.action === 'input' && p.kind === 'pick' && action.value === null ? { picked: undefined, items: [], count: 0 } : {}),
   });
   const agent = state.agent;
@@ -116,15 +150,24 @@ function applyMock(state: Snapshot, action: Action): Snapshot {
         status: selected.installed ? 'ready' : 'missing', sessionId: null, title: null, items: [], attachments: [], permission: null, question: null, changes: [], queued: [],
         mode: selected.id === 'pi' ? 'all' : 'ask', features: { steer: selected.id !== 'hermes', rewind: selected.id !== 'pi', permissions: selected.id !== 'pi' } } };
     }
+    case 'agentHostConnect': return { ...state, agent: { ...agent, hostTools: { connected: !agent.hostTools?.connected } } };
+    case 'agentHistory': {
+      if (!historyFixture.length || action.index === undefined || action.index !== agent.history?.before) return state;
+      const start = Math.max(0, action.index - 1 - 100);
+      return { ...state, agent: { ...agent, items: historyFixture.slice(start), history: { before: start + 1, hasMore: start > 0, total: historyFixture.length } } };
+    }
     case 'agentConnect': return { ...state, agent: { ...agent, status: 'ready' } };
-    case 'agentNew': { mockViews.set(agent.viewId ?? 'new', agent); return { ...state, agent: { ...agent, viewId: 'sample-new-' + ++mockViewId, sessionId: null, status: 'ready', items: [], queued: [], title: null, permission: null, question: null, changes: [] } }; }
+    case 'agentNew': { mockViews.set(agent.viewId ?? 'new', agent); return { ...state, agent: { ...agent, viewId: 'sample-new-' + ++mockViewId, sessionId: null, hostTools: { connected: false }, status: 'ready', items: [], queued: [], title: null, permission: null, question: null, changes: [] } }; }
+    case 'agentSide': { mockViews.set(agent.viewId ?? 'new', agent); return { ...state, agent: { ...agent, viewId: 'sample-side-' + ++mockViewId, mode: 'plan', items: [], queued: [], title: null, permission: null, question: null, changes: [],
+      side: { parentViewId: agent.viewId ?? 'new', parentSessionId: agent.sessionId, quote: action.values?.quote ?? '', forked: true } } }; }
+    case 'agentSideClose': { const parent = agent.side && mockViews.get(agent.side.parentViewId); return parent ? { ...state, agent: parent } : state; }
     case 'agentLoad': { mockViews.set(agent.viewId ?? 'new', agent); return { ...state, agent: [...mockViews.values()].find(a => a.sessionId === action.value) ?? { ...mockAgent, viewId: 'sample-' + action.value, sessionId: String(action.value) } }; }
     case 'agentPermission': return { ...state, agent: { ...agent, permission: null } };
     case 'agentQuestion': return { ...state, agent: { ...agent, question: null } };
     case 'agentCancel': return { ...state, agent: { ...agent, status: 'ready' } };
     case 'agentOption': return { ...state, agent: { ...agent, config: agent.config.map(o => o.id === action.name ? { ...o, current: String(action.value) } : o) } };
     case 'agentPrompt': { const id = agent.items.length + 10; const base = { files: [], images: [] as number[], checkpoint: true };
-      if (agent.status === 'working') return { ...state, agent: { ...agent, queued: [...agent.queued, { id, text: String(action.value), steer: !!action.steer }] } };
+      if (agent.status === 'working') return { ...state, agent: { ...agent, queued: [...agent.queued, { id, text: String(action.value), steer: !!action.steer, draft: action.draft }] } };
       return { ...state, agent: { ...agent, attachments: [], items: [...agent.items,
       { ...base, id, kind: 'user', text: String(action.value), chips: [...(action.context ? ['Facade Study'] : []), ...(action.mentions ?? []).map(m => m.label), ...agent.attachments.map(a => a.name)] },
       { ...base, id: id + 1, kind: 'assistant', text: 'This is the browser preview sample; the real agent answers in Rhino.', chips: [], checkpoint: false }] } }; }
@@ -134,6 +177,7 @@ function applyMock(state: Snapshot, action: Action): Snapshot {
     case 'agentDetach': return { ...state, agent: { ...agent, attachments: agent.attachments.filter(a => a.id !== action.index) } };
     case 'agentSteer': return { ...state, agent: { ...agent, queued: agent.queued.map(q => q.id === action.index ? { ...q, steer: true } : q) } };
     case 'agentUnqueue': return { ...state, agent: { ...agent, queued: agent.queued.filter(q => q.id !== action.index) } };
+    case 'agentEditQueued': return { ...state, agent: { ...agent, queued: agent.queued.filter(q => q.id !== action.index) } };
     case 'agentKeep': return { ...state, agent: { ...agent, changes: [] } };
     case 'agentRevert': return { ...state, agent: { ...agent, changes: agent.changes.filter(c => c.path !== action.path) } };
     default: return state;
@@ -145,6 +189,8 @@ function applyMock(state: Snapshot, action: Action): Snapshot {
     case 'range': case 'style': case 'element': case 'reorder': return { ...state, inputs, ...(action.action === 'reorder' ? { outputs: [], status: 'pending' as const } : {}) };
     case 'preview': case 'pstyle': return { ...state, inputs, outputs: state.outputs.map(o => o.name === action.name
       ? { ...o, ...(action.action === 'preview' ? { visible: !!action.visible } : o.style && typeof action.style === 'object' ? { style: mockStyle(o.style, action.style) } : {}) } : o) };
+    case 'layout': return action.layoutRevision !== (state.layout?.rev ?? 0) ? state : { ...state, layout: { rev: (state.layout?.rev ?? 0) + 1, inputs: action.inputs!, outputs: action.outputs! } };
+    case 'previewAll': return { ...state, previewAll: !!action.visible };
     case 'auto': return { ...state, auto: !!action.value };
     case 'select': return { ...state, revision: state.revision + 1, selected: action.path, status: 'pending', outputs: [], inputs: state.inputs.map(p => ({ ...p, value: undefined })),
       solve: action.path?.includes('CurveSmooth') ? { playing: false, frame: 0, done: false, stalled: false, rate: 0, held: false } : null };
@@ -164,7 +210,9 @@ function applyMock(state: Snapshot, action: Action): Snapshot {
 }
 
 function mockStyle(old: PreviewStyle, edit: StyleEdit): PreviewStyle {
-  return { ...old, ...edit, color: edit.color ?? old.color, custom: edit.color !== null };
+  const channel = (value: StyleEdit['fill'], fallback: string) => value && ({ color: value.color ?? fallback, custom: value.color !== null, opacity: value.opacity });
+  return { ...old, ...edit, color: edit.edges?.color ?? edit.color ?? old.color, custom: edit.edges ? edit.edges.color !== null : edit.color !== null,
+    edges: channel(edit.edges, '#40E0D0') ?? old.edges, fill: channel(edit.fill, '#40E0D0') ?? old.fill };
 }
 
 function move<T>(items: T[], from: number, to: number) {

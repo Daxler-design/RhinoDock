@@ -25,7 +25,7 @@ namespace rhDock.Agents;
 /// </summary>
 public sealed partial class OpenCode(string executable, Action<string> log, IReadOnlyDictionary<string, string>? environment = null) : IAgentHarness
 {
-    private const int MaxReplayMessages = 1000;
+
     private readonly object gate = new();
     private readonly ConcurrentDictionary<string, TaskCompletionSource<TurnResult>> turns = new();
     private readonly ConcurrentDictionary<string, Live> live = new();
@@ -128,6 +128,17 @@ public sealed partial class OpenCode(string executable, Action<string> log, IRea
         return id;
     }
 
+    // A fork is an ordinary session holding a copy of the messages; it is deleted when its side chat closes.
+    public async Task<string?> ForkAsync(string repository, string sessionId)
+    {
+        var session = (await Call(HttpMethod.Post, $"api/session/{sessionId}/fork?" + Location(repository), new JsonObject())).GetProperty("data");
+        var id = Str(session, "id")!;
+        live[id] = new Live { Agent = Str(session, "agent"), Model = session.TryGetProperty("model", out var m) && m.ValueKind == JsonValueKind.Object ? ModelOf(m) : null };
+        return id;
+    }
+
+    public Task DiscardAsync(string repository, string sessionId) => Call(HttpMethod.Delete, $"api/session/{sessionId}?" + Location(repository));
+
     public async Task LoadAsync(string repository, string sessionId)
     {
         var state = live.GetOrAdd(sessionId, _ => new Live());
@@ -138,7 +149,7 @@ public sealed partial class OpenCode(string executable, Action<string> log, IRea
         // A rewound conversation keeps its later messages until the next prompt; they are not shown.
         var boundary = session.TryGetProperty("revert", out var revert) && revert.ValueKind == JsonValueKind.Object ? Str(revert, "messageID") : null;
         string? cursor = null;
-        var count = 0;
+        var seenCursors = new HashSet<string>(StringComparer.Ordinal);
         TokenUsage? last = null;
         do
         {
@@ -155,10 +166,10 @@ public sealed partial class OpenCode(string executable, Action<string> log, IRea
                 }
                 last = Replay(sessionId, message) ?? last;
             }
-            count += messages.Length;
+
             cursor = stop || messages.Length < 200 ? null : page.TryGetProperty("cursor", out var c) ? Str(c, "next") : null;
         }
-        while (cursor is not null && count < MaxReplayMessages);
+        while (cursor is not null && seenCursors.Add(cursor));
         if (last is not null) Emit(new ContextUsage(sessionId, last.Total, ContextSize(state.Model), state.Cost));
     }
 

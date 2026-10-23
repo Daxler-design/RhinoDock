@@ -12,7 +12,11 @@ namespace rhDock.Agents;
 /// <param name="Steer">A message can join the running turn.</param>
 /// <param name="Rewind">The conversation can go back to before a prompt.</param>
 /// <param name="Permissions">The agent asks before edits and commands, so rhDock's permission modes apply. Pi never asks.</param>
-public sealed record HarnessFeatures(bool Steer, bool Rewind, bool Permissions, bool Compact = true);
+/// <param name="AutoMode">The agent's own automatic review mode (a reviewer approves or blocks each action), by the name it uses; null when it has none. It is not Allow all.</param>
+/// <param name="Fork">A side chat forks the conversation through the agent's own fork (<see cref="IAgentHarness.ForkAsync"/>). Agents that may
+/// not fork keep it false and their side chat tries anyway, falling back to a seeded conversation: ACP agents fork only when they advertise
+/// <c>sessionCapabilities.fork</c>, and omp's Pi <c>clone</c> is unverified.</param>
+public sealed record HarnessFeatures(bool Steer, bool Rewind, bool Permissions, bool Compact = true, string? AutoMode = null, bool Fork = false);
 
 /// <summary>One agent rhDock can drive: how to find it, how to install it, and its adapter.</summary>
 /// <param name="Commands">Executable names, in lookup order.</param>
@@ -30,17 +34,17 @@ public static class Harnesses
     public static readonly IReadOnlyList<HarnessInfo> All =
     [
         new("claude", "Claude Code", ["claude"], "npm install -g @anthropic-ai/claude-code", "https://code.claude.com/docs", null,
-            new(Steer: true, Rewind: true, Permissions: true), (exe, log) => new ClaudeCode(exe, log)),
+            new(Steer: true, Rewind: true, Permissions: true, AutoMode: "Auto", Fork: true), (exe, log) => new ClaudeCode(exe, log)),
         new("codex", "Codex", ["codex"], "npm install -g @openai/codex", "https://developers.openai.com/codex/cli", null,
-            new(Steer: true, Rewind: true, Permissions: true), (exe, log) => new Codex(exe, log)),
+            new(Steer: true, Rewind: true, Permissions: true, AutoMode: "Auto-review", Fork: true), (exe, log) => new Codex(exe, log)),
         new("cursor", "Cursor", ["cursor-agent"], "curl https://cursor.com/install -fsS | bash", "https://cursor.com/cli", null,
             new(Steer: false, Rewind: false, Permissions: true, Compact: false), (exe, log) => new AcpAgent("Cursor", exe, ["acp"], log)),
         new("grok", "Grok Build", ["grok"], "curl -fsSL https://x.ai/cli/install.sh | bash", "https://x.ai/cli", "agent",
             new(Steer: false, Rewind: false, Permissions: true, Compact: false), (exe, log) => new AcpAgent("Grok Build", exe, ["--no-auto-update", "agent", "--no-leader", "stdio"], log)),
         new("opencode", "OpenCode", ["opencode"], "curl -fsSL https://opencode.ai/install | bash", "https://opencode.ai/v2/docs/", null,
-            new(Steer: true, Rewind: true, Permissions: true), (exe, log) => new OpenCode(exe, log, OpenCodeEnvironment)),
+            new(Steer: true, Rewind: true, Permissions: true, Fork: true), (exe, log) => new OpenCode(exe, log, OpenCodeEnvironment)),
         new("pi", "Pi", ["pi-coding-agent", "pi"], "npm install -g @earendil-works/pi-coding-agent", "https://pi.dev", null,
-            new(Steer: true, Rewind: false, Permissions: false), (exe, log) => new Pi("Pi", exe, log)),
+            new(Steer: true, Rewind: false, Permissions: false, Fork: true), (exe, log) => new Pi("Pi", exe, log)),
         new("omp", "omp", ["omp"], "curl -fsSL https://omp.sh/install | sh", "https://omp.sh", "rpc",
             new(Steer: true, Rewind: false, Permissions: false), (exe, log) => new Pi("omp", exe, log)),
         new("fx", "fx", ["fx"], "curl -fsSL https://fx.sh/setup.sh | bash", "https://fx.sh", "acp",

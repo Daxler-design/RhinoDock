@@ -1,3 +1,5 @@
+using System.Reflection;
+using System.Text.Json;
 using rhDock.Agents;
 
 static class OfflineChecks
@@ -12,6 +14,40 @@ static class OfflineChecks
             || new TurnResult("error", "plain").Message != "plain" || new TurnResult("error", "bad {json").Message != "bad {json")
             throw new Exception("A provider's JSON error must read as its message, and other errors unchanged.");
         Console.WriteLine("PASS: readable turn errors.");
+
+        // Tool-result images: the shapes MCP/ACP/Pi, Claude, and OpenCode use are read; other types, sizes, and bare paths are not.
+        var toolImages = typeof(ClaudeCode).Assembly.GetType("rhDock.Agents.ToolImages")!.GetMethod("In", BindingFlags.Public | BindingFlags.Static)!;
+        var blocks = JsonSerializer.Deserialize<JsonElement[]>("""
+            [{"type":"image","data":"QUJD","mimeType":"image/png"},
+             {"type":"image","source":{"type":"base64","media_type":"image/jpeg","data":"QUJD"}},
+             {"type":"file","mime":"image/webp","url":"data:image/webp;base64,QUJD"},
+             {"type":"image","data":"QUJD","mimeType":"image/svg+xml"},
+             {"type":"file","url":"/tmp/shot.png"},
+             {"type":"text","text":"hello"}]
+            """)!;
+        var read = (IReadOnlyList<AgentImage>?)toolImages.Invoke(null, [blocks, "Capture viewport"]);
+        if (read is not { Count: 3 } || read[0].MimeType != "image/png" || read[1].MimeType != "image/jpeg" || read[2].MimeType != "image/webp" || read.Any(i => i.Data != "QUJD" || i.Name != "Capture viewport"))
+            throw new Exception("Tool results must yield exactly their embedded png/jpeg/gif/webp images.");
+        if (toolImages.Invoke(null, [JsonSerializer.Deserialize<JsonElement[]>("""[{"type":"text","text":"x"}]""")!, "t"]) is not null) throw new Exception("A result without images must yield none.");
+        Console.WriteLine("PASS: tool-result images are read from every adapter's shape.");
+
+        // Native automatic review is its own mode, never Allow all: Claude Code's "auto", Codex's reviewer "auto_review" with the workspace sandbox.
+        var claudeMode = (string)typeof(ClaudeCode).GetMethod("PermissionMode", BindingFlags.NonPublic | BindingFlags.Static)!.Invoke(null, ["auto"])!;
+        var codexPolicy = typeof(Codex).GetMethod("Policy", BindingFlags.NonPublic | BindingFlags.Static)!;
+        var codexAuto = (System.Text.Json.Nodes.JsonObject)codexPolicy.Invoke(null, ["auto", false, false])!;
+        var codexAsk = (System.Text.Json.Nodes.JsonObject)codexPolicy.Invoke(null, ["ask", false, false])!;
+        if (claudeMode != "auto" || (string?)codexAuto["approvalsReviewer"] != "auto_review" || (string?)codexAsk["approvalsReviewer"] != "user"
+            || (string?)codexAuto["sandboxPolicy"]?["type"] != "workspaceWrite")
+            throw new Exception("Auto must map to Claude's auto mode and Codex's auto_review reviewer inside the workspace sandbox; other modes keep the user as reviewer.");
+        // With rhDockConnect on, sandboxed Codex commands may reach rhDock's localhost endpoint; without it, the sandbox keeps network off.
+        var codexConnected = (System.Text.Json.Nodes.JsonObject)codexPolicy.Invoke(null, ["ask", false, true])!;
+        var codexFull = (System.Text.Json.Nodes.JsonObject)codexPolicy.Invoke(null, ["all", false, true])!;
+        if (codexConnected["sandboxPolicy"]?["networkAccess"]?.GetValue<bool>() != true || codexAsk["sandboxPolicy"]?["networkAccess"] is not null
+            || codexFull["sandboxPolicy"]?["networkAccess"] is not null)
+            throw new Exception("Codex's sandbox must allow network only while rhDockConnect is on, and full access needs no flag.");
+        if (Harnesses.Get("claude").Features.AutoMode is null || Harnesses.Get("codex").Features.AutoMode is null || Harnesses.Get("opencode").Features.AutoMode is not null)
+            throw new Exception("Only agents with a native review mode may offer Auto.");
+        Console.WriteLine("PASS: native Auto modes map to each agent's own review and stay agent-specific.");
         if (ConversationTitle.Clean("Title: \"Fix Attractor Falloff.\"\nextra") != "Fix Attractor Falloff" || ConversationTitle.Clean("  \n") is not null
             || ConversationTitle.Clean(new string('a', 80))!.Length != 50 || !ConversationTitle.Prompt("hello").EndsWith("hello", StringComparison.Ordinal))
             throw new Exception("Generated titles must be one clean line of at most 50 characters, built from the user's message.");

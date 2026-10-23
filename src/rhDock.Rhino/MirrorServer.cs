@@ -139,6 +139,14 @@ internal static class MirrorServer
             Send(response, 200, "application/json", snapshot is null || panelHandler is null
                 ? "{\"connected\":false}" : "{\"connected\":true,\"snapshot\":" + snapshot + "}");
         }
+        else if (path == "__rhdock/mirror/image")
+        {
+            // The native panel receives images by a script call into its own WebView; a mirrored page asks for them here instead.
+            var url = int.TryParse(request.QueryString["id"], out var id) ? AgentHost.Current.Picture(id)
+                : request.QueryString["path"] is { Length: > 0 } imagePath ? AgentHost.Current.PictureFromPath(imagePath) : null;
+            if (request.QueryString["small"] == "1") url = ImageThumbnail.Of(url);
+            Send(response, 200, "application/json", JsonSerializer.Serialize(new { url }));
+        }
         else if (path == "__rhdock/mirror/action" && request.HttpMethod == "POST")
         {
             var json = await ReadBody(request);

@@ -2,7 +2,7 @@
 
 ## Install
 
-Requirements: Rhino 8.30 or later, using .NET 8 (Windows or macOS).
+Requirements: Rhino 8.31 or later, using .NET 8 (Windows or macOS).
 
 In Rhino, run `_PackageManager`, search for `rhdock`, and install it. Or build the package from source (see the [README](https://github.com/Daxler-design/RhinoDock/blob/main/README.md#build-from-source)), install the `.yak` file with Rhino's Yak CLI or drag it onto Rhino, and restart Rhino. Install only one copy: if you loaded an `.rhp` directly, remove that registration first.
 
@@ -22,3 +22,7 @@ The starter has three Scripts: a minimal one, Hex Attractor Scale, and Laplacian
 - Write your own Script: [writing Scripts](scripts.md).
 - Let an agent write it with you: [Agent tab](agent.md).
 - Add your own windows or tools: [Extensions](extensions.md).
+
+## Existing repositories
+
+Updating the plugin does not replace your Working Repo or Extension Repo. Existing numeric and string mode inputs keep their current editor; declare a C# enum to opt into a dropdown. New Extension Repos include the ViewportSliders example; existing repos are not modified.

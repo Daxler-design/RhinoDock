@@ -10,6 +10,7 @@ An **Extension Repo** is a folder where each top-level folder with a `.csproj` i
 
 - `AGENTS.md` and `CLAUDE.md`: the full contract, written so an agent can create Extensions from the repo alone.
 - A starter `MyExtension` with a C# class and a web page.
+- ViewportSliders and companion Script source showing inline editing through viewport handles.
 
 Use **New Extension** to add another from the starter. Share an Extension by sharing its repo.
 
@@ -37,3 +38,7 @@ An Extension runs with your full trust inside Rhino, like a plug-in. It is not s
 Publish an Extension Repo on GitHub and add the `rhdock-extension` topic so others can find it. To use one, clone it and open it in the Extensions tab.
 
 See also [debugging](debugging.md).
+
+## ViewportSliders example
+
+See [ViewportSliders](https://github.com/Daxler-design/RhinoDock/tree/main/examples/ViewportSliders) and its companion Working Repo. The Extension edits ordinary numeric list inputs using `SetInputItem`, synchronizes active rows through `SetActiveItem`, and explicitly reorders related inputs when needed. The host performs no implicit list matching. Its native callbacks and conduit are released on disposal.

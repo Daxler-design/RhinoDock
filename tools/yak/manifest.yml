@@ -1,6 +1,6 @@
 name: rhdock
-version: 0.6.8
+version: 0.6.10
 authors:
   - Daxler-design
-description: Your C# tools, your coding agent, and your own Extensions inside Rhino 8. Save a file and Rhino updates.
+description: A live C# computational workspace inside Rhino 8.
 url: https://github.com/Daxler-design/RhinoDock

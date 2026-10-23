@@ -108,7 +108,7 @@ public sealed partial class Pi
             ?? (kind == "Execute" ? $"$ {Str(args, "command")}" + (text.Length > 0 ? "\n" + text : "") : null)
             ?? (toolName == "edit" ? string.Join("\n", Arr(args, "edits").Select(e => $"-{Str(e, "oldText")?.Replace("\n", "\n-")}\n+{Str(e, "newText")?.Replace("\n", "\n+")}")) : null)
             ?? (text.Length > 0 ? text : null);
-        return new ToolCall(sid, id, title, kind, status, detail, file is null ? null : [file]);
+        return new ToolCall(sid, id, title, kind, status, detail, file is null ? null : [file], Images: ToolImages.In(Arr(result, "content"), title));
     }
 
     private void Emit(AgentEvent e)
@@ -138,6 +138,7 @@ public sealed partial class Pi
                         switch (Str(block, "type"))
                         {
                             case "text": Emit(new TextDelta(sid, (last == "text" ? "\n\n" : "") + Str(block, "text"))); break;
+                            case "image" when ToolImages.From(block, "image") is { } picture: Emit(new MediaMessage(sid, [picture])); break;
                             case "thinking" when Str(block, "thinking") is { Length: > 0 } thought: Emit(new ReasoningDelta(sid, thought)); break;
                             case "toolCall" when Str(block, "id") is { } id:
                                 tools[id] = (Str(block, "name") ?? "tool", Obj(block, "arguments").Clone());

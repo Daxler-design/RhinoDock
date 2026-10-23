@@ -8,7 +8,7 @@ using rhDock.Core;
 
 namespace rhDock.Rhino;
 
-internal sealed class SingleScriptHost : IReloadable, IDisposable
+internal sealed partial class SingleScriptHost : IReloadable, IDisposable
 {
     private static SingleScriptHost? current;
     public static SingleScriptHost Current => current ??= new();
@@ -21,6 +21,12 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
     private readonly Dictionary<string, PickBinding> picks = new(StringComparer.Ordinal);
     private readonly HashSet<string> changedPicks = new(StringComparer.Ordinal);
     private readonly HashSet<string> hiddenPreview = new(StringComparer.Ordinal);
+    private bool inputPreviewAll = true, outputPreviewAll = true;
+    private ScriptLayout? layout;
+    private string? layoutKey;
+    private DateTime layoutStamp;
+    // Another Rhino (on Windows, another process) saving layout.json refreshes this panel at once, so every Rhino shows the latest layout.
+    private FileSystemWatcher? layoutWatcher;
     private readonly Dictionary<string, NumericRange> numericRanges = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> booleanStyles = new(StringComparer.Ordinal);
     private readonly Dictionary<string, PreviewStyle> previewStyles = new(StringComparer.Ordinal);
@@ -28,7 +34,9 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
     private readonly Dictionary<string, SavedScriptState> scriptStates = new(StringComparer.Ordinal);
     private SingleScriptPanel? panel;
     private RhinoDoc? document;
-    private DateTime? autoDue;
+    private long? autoDue;
+    private readonly AutoRunPacer pacer = new();
+    private Eto.Forms.UITimer? autoTimer;
     private DateTime? saveDue;
     private SingleScriptRunRecord? lastRun;
     private bool historicalRun;
@@ -86,6 +94,9 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
     public IReadOnlyDictionary<string, NumericRange> NumericRanges => numericRanges;
     public IReadOnlyDictionary<string, string> BooleanStyles => booleanStyles;
     internal PickRequest? ActivePick => activePick;
+    internal Extensions.ScriptInputItem? ActiveItem { get; private set; }
+    internal bool HasDocument => document is not null && document.RuntimeSerialNumber == RhinoDoc.ActiveDoc?.RuntimeSerialNumber;
+    internal event Action<Extensions.ScriptInputReorder>? InputReordered;
 
     /// <summary>Solver Run Bar state; null for one-shot Scripts.</summary>
     internal SolveState? Solve => session.IsSolver
@@ -104,11 +115,17 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
     }
 
     /// <summary>The Preview Style the host draws with, defaults filled in, for panel glyphs and controls.</summary>
-    internal (string Color, bool Custom, int Weight, int Size, int Shading) ResolvedStyle(string name, string? family, bool input)
+    internal record ResolvedPreviewStyle(string Color, bool Custom, int Weight, int Size, int Shading,
+        string FillColor, bool FillCustom, int EdgeOpacity);
+
+    internal ResolvedPreviewStyle ResolvedStyle(string name, string? family, bool input)
     {
         var style = previewStyles.GetValueOrDefault(name);
-        var color = style?.Color ?? (input ? InputPreviewColor : family == "point" ? PointPreviewColor : OutputPreviewColor);
-        return (color, style?.Color is not null, style?.Weight ?? (family == "curve" ? 2 : 1), style?.Size ?? 5, style?.Shading ?? 30);
+        var fallback = input ? InputPreviewColor : family == "point" ? PointPreviewColor : OutputPreviewColor;
+        var edge = style?.Edges ?? new PreviewChannel(style?.Color, 100);
+        var fill = style?.Fill ?? new PreviewChannel(style?.Color, style?.Shading ?? 30);
+        return new(edge.Color ?? fallback, edge.Color is not null, style?.Weight ?? (family == "curve" ? 2 : 1), style?.Size ?? 5,
+            fill.Opacity, fill.Color ?? fallback, fill.Color is not null, edge.Opacity);
     }
 
     internal string? OutputFamily(string name)
@@ -161,6 +178,7 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
         { SaveNow(); global::Rhino.UI.Panels.ClosePanel(typeof(SingleScriptPanel)); return; }
         if (document is not null && document.RuntimeSerialNumber != doc.RuntimeSerialNumber)
         { SaveNow(); Halt(); ClearPreview(); ClearPickedInputs(); }
+        if (document != doc) ClearInputHistory();
         document = doc;
         conduit.DocumentSerial = doc.RuntimeSerialNumber;
         global::Rhino.UI.Panels.OpenPanel(typeof(SingleScriptPanel));
@@ -173,6 +191,7 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
         panel = view;
         if (document is null && RhinoDoc.ActiveDoc is { } active)
         {
+            ClearInputHistory();
             document = active;
             conduit.DocumentSerial = active.RuntimeSerialNumber;
             RebuildPreview();
@@ -190,6 +209,7 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
 
     public void Open(string folder)
     {
+        AgentHost.RevokeHostConnections();
         try
         {
             SaveNow();
@@ -202,9 +222,11 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
             Halt();
             stalled = false;
             frameRate = 0;
+            pacer.Reset();
             ClearPreview();
             ClearPickedInputs();
             hiddenPreview.Clear();
+            inputPreviewAll = outputPreviewAll = true;
             numericRanges.Clear();
             booleanStyles.Clear();
             previewStyles.Clear();
@@ -215,8 +237,11 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
             restoreNotice = null;
             Auto = false;
             session.Open(folder);
+            ActiveItem = null;
             revision++;
+            ClearInputHistory();
             watcher.Register(session.Repository!, this);
+            WatchLayout(session.Repository!);
             try
             {
                 if (SingleScriptWorkspaceStore.LoadHistory(session.Repository!) is { Revisions: { Length: > 0 } revisions })
@@ -249,9 +274,11 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
             Halt();
             stalled = false;
             frameRate = 0;
+            pacer.Reset();
             ClearPreview();
             ClearPickedInputs();
             hiddenPreview.Clear();
+            inputPreviewAll = outputPreviewAll = true;
             numericRanges.Clear();
             booleanStyles.Clear();
             previewStyles.Clear();
@@ -260,7 +287,9 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
             historicalRun = false;
             restoreNotice = null;
             session.Select(entry);
+            ActiveItem = null;
             revision++;
+            ClearInputHistory();
             if (scriptStates.TryGetValue(entry, out var saved)) RestoreScriptState(saved);
             RebuildPreview();
             Changed(session: true);
@@ -289,14 +318,15 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
     internal static string PortKind(PortDescriptor p)
     {
         var type = PortTypeName.Element(p.TypeName);
-        return p.Access == PortAccess.List && type is "System.Double" or "System.Int32" or "System.String" or "System.Boolean" ? "list"
+        return p.Access == PortAccess.Item && p.EnumValues.Length > 0 ? "text"
+            : p.Access == PortAccess.List && type is "System.Double" or "System.Int32" or "System.String" or "System.Boolean" ? "list"
             : p.Access == PortAccess.Item && type == "System.Double" ? "number"
             : p.Access == PortAccess.Item && type == "System.Int32" ? "int"
             : p.Access == PortAccess.Item && type == "System.String" ? "text"
             : p.Access == PortAccess.Item && type == "System.Boolean" ? "boolean"
             : p.Access != PortAccess.Tree && IsColor(type) ? "color"
             : GeometryVocabulary.CanPick(type) ? "pick"
-            : p.Access == PortAccess.Item && Extensions.ExtensionHost.EditorFor(type) is not null ? "extension"
+            : p.Access != PortAccess.Tree && Extensions.ExtensionHost.EditorFor(type, p.Access == PortAccess.List) is not null ? (p.Access == PortAccess.List ? "list" : "extension")
             : "unsupported";
     }
 
@@ -313,12 +343,17 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
     {
         try
         {
+            var before = picks.ContainsKey(name) ? null : SavedScalar.Capture(session.Inputs.GetValueOrDefault(name));
             var old = picks.ContainsKey(name) ? session.Inputs.GetValueOrDefault(name) : null;
             session.SetInput(name, value);
+            if (pick is null && before is not null && SavedScalar.Capture(value) is { } after)
+                RecordInputUndo(name, before, after);
             stalled = false;
             unchangedFrames = 0;
             if (!Auto) Halt();
             if (value is not null) ClearAttention(name);
+            if (ActiveItem?.Name == name && (value is null || ActiveItem.Index is { } index
+                && (value is not ICollection items || index >= items.Count))) ActiveItem = null;
             picks.Remove(name);
             changedPicks.Remove(name);
             if (pick is not null) picks[name] = pick;
@@ -502,6 +537,7 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
         autoDue = null;
         if (running) return;
         running = true;
+        var blocked = System.Diagnostics.Stopwatch.StartNew();
         Changed();
         try
         {
@@ -524,22 +560,44 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
             ScheduleSave();
         }
         catch (Exception ex) { panel?.ShowError(ex.Message); }
-        finally { running = false; RebuildPreview(); Changed(); }
+        finally
+        {
+            running = false;
+            RebuildPreview();
+            Changed();
+            pacer.Record(blocked.Elapsed.TotalMilliseconds, System.Environment.TickCount64);
+        }
     }
 
+    /// <summary>Paces Auto from measured Run time. A timer fires it, because Rhino raises Idle only once per quiet period.</summary>
     private void ScheduleAuto()
     {
-        if (Auto && global::Rhino.UI.Panels.IsPanelVisible(typeof(SingleScriptPanel)) && session.Selected is not null && session.Result.Status != "compile_error")
-            autoDue = DateTime.UtcNow.AddMilliseconds(300);
+        if (!Auto || !global::Rhino.UI.Panels.IsPanelVisible(typeof(SingleScriptPanel)) || session.Selected is null || session.Result.Status == "compile_error") return;
+        var due = pacer.Due(System.Environment.TickCount64);
+        autoDue = due;
+        if (autoTimer is null) { autoTimer = new Eto.Forms.UITimer(); autoTimer.Elapsed += (_, _) => { autoTimer.Stop(); AutoTick(); }; }
+        autoTimer.Stop();
+        autoTimer.Interval = Math.Max(1, due - System.Environment.TickCount64) / 1000.0;
+        autoTimer.Start();
+    }
+
+    private bool AutoEligible => !disposed && !running && Auto && global::Rhino.UI.Panels.IsPanelVisible(typeof(SingleScriptPanel))
+        && document is not null && RhinoDoc.ActiveDoc?.RuntimeSerialNumber == document.RuntimeSerialNumber;
+
+    // Commands and picks leave a due Auto Run to Idle, as before the timer existed.
+    private void AutoTick()
+    {
+        if (autoDue is not { } due) return;
+        var wait = due - System.Environment.TickCount64;
+        if (wait > 0) { autoTimer!.Interval = wait / 1000.0; autoTimer.Start(); return; }
+        if (AutoEligible && activePick is null && !Command.InCommand()) Run();
     }
 
     private void OnIdle(object? sender, EventArgs e)
     {
         if (disposed || running) return;
         RefreshPickedGeometry();
-        if (Auto && autoDue is { } due && DateTime.UtcNow >= due
-            && global::Rhino.UI.Panels.IsPanelVisible(typeof(SingleScriptPanel)) && document is not null
-            && RhinoDoc.ActiveDoc?.RuntimeSerialNumber == document.RuntimeSerialNumber) Run();
+        if (autoDue is { } due && System.Environment.TickCount64 >= due && AutoEligible) Run();
         if (saveDue is { } save && DateTime.UtcNow >= save) SaveNow();
     }
 
@@ -591,10 +649,13 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
         SaveNow();
         autoDue = null;
         Halt();
+        ClearInputHistory();
         document = null;
+        ActiveItem = null;
         ClearPreview();
         ClearPickedInputs();
         global::Rhino.UI.Panels.ClosePanel(typeof(SingleScriptPanel));
+        Changed();
     }
 
     public bool CanBake(string name) => session.HasCurrentOutputs
@@ -614,6 +675,103 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
         else hiddenPreview.Add(name);
         RebuildPreview();
         ScheduleSave();
+    }
+
+    /// <summary>The global Preview switch for the active Script. Off hides every rhDock Preview but keeps each per-output setting, output data, and Bake choices.</summary>
+    public bool PreviewAll => inputPreviewAll && outputPreviewAll;
+    public bool InputPreviewAll => inputPreviewAll;
+    public bool OutputPreviewAll => outputPreviewAll;
+
+    public void SetPreviewAll(bool visible, string section = "all")
+    {
+        if (section is not ("all" or "inputs" or "outputs")) throw new ArgumentException("Unknown Preview section.", nameof(section));
+        if (section != "outputs") inputPreviewAll = visible;
+        if (section != "inputs") outputPreviewAll = visible;
+        RebuildPreview();
+        ScheduleSave();
+    }
+
+    /// <summary>The saved visual layout of the selected Script, re-read when layout.json changes (for example, written by another Rhino).</summary>
+    internal ScriptLayout? CurrentLayout()
+    {
+        if (session.Repository is not { } repository || session.Selected is not { } selected) return null;
+        var path = ScriptLayoutStore.PathFor(repository);
+        var stamp = File.Exists(path) ? File.GetLastWriteTimeUtc(path) : DateTime.MinValue;
+        var key = repository + "|" + selected.EntryFile;
+        if (key != layoutKey || stamp != layoutStamp)
+        {
+            layout = ScriptLayoutStore.Load(repository, selected.EntryFile);
+            layoutKey = key;
+            layoutStamp = stamp;
+        }
+        return layout;
+    }
+
+    /// <summary>Ports ("i:name" or "o:name") whose group Preview switch is off. A group switch never changes a port's own visibility.</summary>
+    private HashSet<string> GroupPreviewOff() => GroupPreviewOff(CurrentLayout());
+
+    private static HashSet<string> GroupPreviewOff(ScriptLayout? current)
+    {
+        var off = new HashSet<string>(StringComparer.Ordinal);
+        if (current is null) return off;
+        foreach (var group in current.Inputs.Groups.Where(g => g.PreviewOff == true)) foreach (var port in group.Ports) off.Add("i:" + port);
+        foreach (var group in current.Outputs.Groups.Where(g => g.PreviewOff == true)) foreach (var port in group.Ports) off.Add("o:" + port);
+        return off;
+    }
+
+    private void WatchLayout(string repository)
+    {
+        layoutWatcher?.Dispose();
+        layoutWatcher = null;
+        try
+        {
+            var folder = Path.GetDirectoryName(ScriptLayoutStore.PathFor(repository))!;
+            Directory.CreateDirectory(folder);
+            var watch = new FileSystemWatcher(folder, Path.GetFileName(ScriptLayoutStore.PathFor(repository))) { NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.CreationTime };
+            FileSystemEventHandler changed = (_, _) => RhinoApp.InvokeOnUiThread((Action)OnLayoutFileChanged);
+            watch.Changed += changed;
+            watch.Created += changed;
+            watch.Renamed += (_, _) => RhinoApp.InvokeOnUiThread((Action)OnLayoutFileChanged);
+            watch.EnableRaisingEvents = true;
+            layoutWatcher = watch;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        { RhinoApp.WriteLine("rhDock: layout changes from another Rhino show after the next refresh: " + ex.Message); }
+    }
+
+    /// <summary>layout.json changed: show another writer's layout, and redraw Preview when its group eyes differ. Values, runs and Workspace state are untouched.</summary>
+    private void OnLayoutFileChanged()
+    {
+        var before = layout;
+        var after = CurrentLayout();
+        if (ReferenceEquals(before, after)) return; // this Rhino's own save, already applied
+        if (!GroupPreviewOff(before).SetEquals(GroupPreviewOff(after))) RebuildPreview();
+        RefreshPanel();
+    }
+
+    public void SetLayout(int expectedRev, SectionLayout inputs, SectionLayout outputs)
+    {
+        if (session.Repository is null || session.Selected is null) return;
+        try
+        {
+            if (!TrySetLayout(expectedRev, inputs, outputs))
+                panel?.ShowMessage("Another Rhino changed this layout first. Showing its layout; your change was not applied.", showBanner: true);
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException)
+        { panel?.ShowError("Layout was not saved: " + ex.Message); }
+    }
+
+    internal bool TrySetLayout(int expectedRev, SectionLayout inputs, SectionLayout outputs)
+    {
+        if (session.Repository is not { } repository || session.Selected is not { } selected)
+            throw new InvalidOperationException("Select a Script first.");
+        var offBefore = GroupPreviewOff();
+        var accepted = ScriptLayoutStore.TryReplace(repository, selected.EntryFile, expectedRev, inputs, outputs, out var current);
+        layout = current;
+        var path = ScriptLayoutStore.PathFor(repository);
+        layoutStamp = File.Exists(path) ? File.GetLastWriteTimeUtc(path) : DateTime.MinValue;
+        if (!offBefore.SetEquals(GroupPreviewOff())) RebuildPreview();
+        return accepted;
     }
 
     public void SetRange(string name, NumericRange? range)
@@ -711,7 +869,9 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
             NumericRanges = new(numericRanges, StringComparer.Ordinal),
             BooleanStyles = new(booleanStyles, StringComparer.Ordinal),
             PreviewStyles = new(previewStyles, StringComparer.Ordinal),
-            FrameRate = frameRate > 0 ? frameRate : null
+            FrameRate = frameRate > 0 ? frameRate : null,
+            InputPreviewOff = inputPreviewAll ? null : true,
+            OutputPreviewOff = outputPreviewAll ? null : true
         };
     }
 
@@ -755,6 +915,8 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
     private void RestoreScriptState(SavedScriptState saved)
     {
         numericRanges.Clear(); booleanStyles.Clear(); previewStyles.Clear(); hiddenElements.Clear();
+        inputPreviewAll = saved.InputsPreviewVisible;
+        outputPreviewAll = saved.OutputsPreviewVisible;
         foreach (var (name, range) in saved.NumericRanges ?? [])
             if (session.Selected?.Ports.Any(port => port.Name == name && !port.IsOutput
                 && port.Access == PortAccess.Item && port.TypeName is "System.Double" or "System.Int32") == true)
@@ -963,15 +1125,37 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
         return found;
     }
 
-    public void ReorderPicked(string name, int from, int to)
+    public void SetActiveItem(string? name, int? index)
     {
-        if (PickPort(name) is not { } port || !picks.TryGetValue(name, out var binding)
-            || from < 0 || to < 0 || from >= binding.Entries.Length || to >= binding.Entries.Length || from == to) return;
-        var entries = binding.Entries.ToList();
-        var moved = entries[from];
-        entries.RemoveAt(from);
-        entries.Insert(to, moved);
-        SetPickEntries(port, entries);
+        if (name is null) { ActiveItem = null; Refresh(); return; }
+        var port = session.Selected?.Ports.FirstOrDefault(p => p.Name == name && !p.IsOutput)
+            ?? throw new ArgumentException("Input not found: " + name);
+        if (port.Access == PortAccess.List && (index is null || session.Inputs.GetValueOrDefault(name) is not ICollection items
+            || index < 0 || index >= items.Count) || port.Access != PortAccess.List && index is not null)
+            throw new ArgumentOutOfRangeException(nameof(index));
+        ActiveItem = new(name, index);
+        Refresh();
+    }
+
+    public void SetInputItem(string name, int index, object? value)
+    {
+        if (session.Selected?.Ports.Any(p => p.Name == name && !p.IsOutput && p.Access == PortAccess.List) != true
+            || session.Inputs.GetValueOrDefault(name) is not IEnumerable items || items is string)
+            throw new ArgumentException("No list input named " + name);
+        SetInput(name, Extensions.InputItems.Replace(items, index, value));
+    }
+
+    public void ReorderInput(string name, int from, int to)
+    {
+        if (session.Selected?.Ports.FirstOrDefault(p => p.Name == name && !p.IsOutput && p.Access == PortAccess.List) is not { } port
+            || session.Inputs.GetValueOrDefault(name) is not ICollection items || from < 0 || to < 0
+            || from >= items.Count || to >= items.Count || from == to) return;
+        if (ActiveItem is { Index: { } active } && ActiveItem.Name == name)
+            ActiveItem = new(name, Extensions.InputItems.MovedIndex(active, from, to));
+        if (picks.TryGetValue(name, out var binding))
+            SetPickEntries(port, ((PickEntry[])Extensions.InputItems.Move(binding.Entries, from, to)).ToList());
+        else SetInput(name, Extensions.InputItems.Move(items, from, to));
+        InputReordered?.Invoke(new(name, from, to));
     }
 
     private const string AttentionPrefix = "Inputs needing attention: ";
@@ -1055,7 +1239,10 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
             return Result.Success;
         }
         var style = previewStyles.GetValueOrDefault(name) ?? new(null, null, null, null);
-        SetPreviewStyle(name, style with { Color = System.Drawing.ColorTranslator.ToHtml(System.Drawing.Color.FromArgb(color.R, color.G, color.B)) });
+        var sampledHex = System.Drawing.ColorTranslator.ToHtml(System.Drawing.Color.FromArgb(color.R, color.G, color.B));
+        SetPreviewStyle(name, index == -2
+            ? style with { Fill = new(sampledHex, style.Fill?.Opacity ?? style.Shading ?? 30) }
+            : style with { Edges = new(sampledHex, style.Edges?.Opacity ?? 100) });
         return Result.Success;
     }
 
@@ -1086,7 +1273,9 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
         return values;
     }
 
-    public void OnSourceChanged() => RhinoApp.InvokeOnUiThread((Action)(() =>
+    public void OnSourceChanged() => RhinoApp.InvokeOnUiThread((Action)ReloadForTools);
+
+    internal void ReloadForTools()
     {
         if (disposed) return;
         try
@@ -1095,7 +1284,10 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
             Halt();
             stalled = false;
             session.Refresh();
+            pacer.Reset();
+            ActiveItem = null;
             revision++;
+            ClearInputHistory();
             ReconcileControlSettings();
             if (session.Result.Status == "compile_error" && session.Selected is not null)
             {
@@ -1117,7 +1309,7 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
             ScheduleSave();
         }
         catch (Exception ex) { panel?.ShowError(ex.Message); }
-    }));
+    }
 
     public void OnEntryRenamed(string oldRel, string newRel) { }
 
@@ -1163,9 +1355,10 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
     private void RebuildPreview()
     {
         var items = new List<PreviewItem>();
+        var groupOff = GroupPreviewOff();
         foreach (var (name, pick) in picks)
         {
-            if (hiddenPreview.Contains(name) || !session.Inputs.TryGetValue(name, out var value)) continue;
+            if (!inputPreviewAll || hiddenPreview.Contains(name) || groupOff.Contains("i:" + name) || !session.Inputs.TryGetValue(name, out var value)) continue;
             hiddenElements.TryGetValue(name, out var hidden);
             var family = GeometryVocabulary.FamilyOf(PortTypeName.Element(pick.TypeName));
             var leaves = Leaves(value).ToArray();
@@ -1185,7 +1378,7 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
         if (session.HasCurrentOutputs)
             foreach (var (name, value) in session.Outputs)
             {
-                if (hiddenPreview.Contains(name)) continue;
+                if (!outputPreviewAll || hiddenPreview.Contains(name) || groupOff.Contains("o:" + name)) continue;
                 var family = OutputFamily(name);
                 foreach (var leaf in Leaves(value))
                     AddPreview(items, leaf, ResolvedStyle(name, family == "mixed" ? GeometryVocabulary.Family(leaf) : family, false));
@@ -1196,9 +1389,9 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
         document?.Views.Redraw();
     }
 
-    private static void AddPreview(List<PreviewItem> items, object leaf, (string Color, bool Custom, int Weight, int Size, int Shading) style, Guid source = default, bool part = false)
+    private static void AddPreview(List<PreviewItem> items, object leaf, ResolvedPreviewStyle style, Guid source = default, bool part = false)
     {
-        var color = System.Drawing.ColorTranslator.FromHtml(style.Color);
+        var color = System.Drawing.Color.FromArgb((int)Math.Round(style.EdgeOpacity * 255.0 / 100), System.Drawing.ColorTranslator.FromHtml(style.Color));
         object? geometry = leaf switch
         {
             Mesh mesh => mesh.DuplicateMesh(),
@@ -1210,7 +1403,8 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
             Point3d point => point,
             _ => leaf.GetType().GetMethod("toRhinoMesh", Type.EmptyTypes)?.Invoke(leaf, null) is Mesh converted ? converted.DuplicateMesh() : null
         };
-        if (geometry is not null) items.Add(new(geometry, color, style.Weight, style.Size, style.Shading, source, style.Custom, part));
+        if (geometry is not null) items.Add(new(geometry, color, style.Weight, style.Size, style.Shading, source, style.FillCustom, part,
+            System.Drawing.ColorTranslator.FromHtml(style.FillColor)));
     }
 
     private static IEnumerable<object> Leaves(object? value)
@@ -1277,7 +1471,9 @@ internal sealed class SingleScriptHost : IReloadable, IDisposable
         ClearPreview();
         ClearPickedInputs();
         conduit.Enabled = false;
+        autoTimer?.Dispose();
         watcher.Dispose();
+        layoutWatcher?.Dispose();
         session.Dispose();
         compiler.Dispose();
     }

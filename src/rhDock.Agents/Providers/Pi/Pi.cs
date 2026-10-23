@@ -81,6 +81,17 @@ public sealed partial class Pi(string name, string executable, Action<string> lo
         return current!;
     }
 
+    // clone copies the active branch into a new session file (with parentSession in its header) and switches to it.
+    public async Task<string?> ForkAsync(string repository, string sessionId)
+    {
+        await Switch(repository, sessionId);
+        if (Bool(await Call(new JsonObject { ["type"] = "clone" }), "cancelled")) return null;
+        var id = Str(await Call(new JsonObject { ["type"] = "get_state" }), "sessionId");
+        if (id is null || id == sessionId) return null;
+        lock (gate) current = id;
+        return id;
+    }
+
     public async Task LoadAsync(string repository, string sessionId)
     {
         await Switch(repository, sessionId);

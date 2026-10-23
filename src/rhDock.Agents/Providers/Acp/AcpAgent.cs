@@ -26,7 +26,7 @@ public sealed partial class AcpAgent(string name, string executable, IReadOnlyLi
     private JsonRpc? rpc;
     private AgentInfo? info;
     private string? repository, spare;
-    private bool canList, canLoad, images = true;
+    private bool canList, canLoad, canFork, images = true;
 
     public event Action<AgentEvent>? Event;
 
@@ -62,6 +62,8 @@ public sealed partial class AcpAgent(string name, string executable, IReadOnlyLi
             var capabilities = Obj(init, "agentCapabilities");
             canLoad = Bool(capabilities, "loadSession");
             canList = Obj(Obj(capabilities, "sessionCapabilities"), "list").ValueKind == JsonValueKind.Object;
+            // session/fork is unstable in ACP; an agent offers it with sessionCapabilities.fork.
+            canFork = Obj(Obj(capabilities, "sessionCapabilities"), "fork").ValueKind == JsonValueKind.Object;
             images = Bool(Obj(capabilities, "promptCapabilities"), "image");
             var agent = Obj(init, "agentInfo");
             info = new AgentInfo(name, Str(agent, "version") ?? Harnesses.Version(executable), executable);
@@ -84,6 +86,15 @@ public sealed partial class AcpAgent(string name, string executable, IReadOnlyLi
         string? id;
         lock (gate) { id = spare; spare = null; }
         return id ?? await NewSession(repository);
+    }
+
+    public async Task<string?> ForkAsync(string repository, string sessionId)
+    {
+        if (!canFork) return null;
+        var result = await Rpc.Request("session/fork", new JsonObject { ["sessionId"] = sessionId, ["cwd"] = AgentProcess.RealPath(repository), ["mcpServers"] = new JsonArray() }, TimeSpan.FromMinutes(2));
+        var id = Str(result, "sessionId")!;
+        Remember(sessions.GetOrAdd(id, _ => new Session()), result);
+        return id;
     }
 
     public async Task LoadAsync(string repository, string sessionId)

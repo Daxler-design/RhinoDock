@@ -36,6 +36,13 @@ jobs:
       - name: Development mirror checks
         working-directory: frontend
         run: npm run check:mirror
+      - name: Script controls and list checks
+        working-directory: frontend
+        run: |
+          npm run check:script-controls
+          npm run check:lists
+          npm run check:theme
+          node scripts/check-activity.mjs
       - name: Restore
         run: dotnet restore rhdock.sln
       - name: Build
@@ -44,6 +51,8 @@ jobs:
         run: dotnet run --project tools/smoke/smoke.csproj --configuration Release --no-build -- --core-only
       - name: Offline agent protocol checks
         run: dotnet run --project tools/smoke/smoke.csproj --configuration Release --no-build -- --agents-offline
+      - name: Host tool boundary and CLI catalog checks
+        run: dotnet run --project tools/smoke/smoke.csproj --configuration Release --no-build -- --host-tools src/rhDock.Cli/bin/Release/net8.0/rhdock.dll src/rhDock.Rhino/bin/Release/net8.0/rhDock.Rhino.rhp
       - name: Agent host checks
         run: dotnet run --project tools/smoke/smoke.csproj --configuration Release --no-build -- --agent-host
       - name: UI bridge checks

@@ -25,7 +25,9 @@ public sealed class DockConduit : DisplayConduit
                 switch (item.Geometry)
                 {
                     case Mesh mesh:
-                        if (item.UseVertexColors) e.Display.DrawMeshFalseColors(mesh);
+                        if (item.UseVertexColors && material.Transparency == 0) e.Display.DrawMeshFalseColors(mesh);
+                        // The two-argument overload suppresses vertex colors in RhinoCommon.
+                        else if (item.VertexColorFaces is { } faces) e.Display.DrawMeshShaded(mesh, material, faces);
                         else e.Display.DrawMeshShaded(mesh, material);
                         break;
                     case Brep brep: e.Display.DrawBrepShaded(brep, material); break;
@@ -44,6 +46,7 @@ public sealed class DockConduit : DisplayConduit
         foreach (var item in Preview.Items)
         {
             if (SourceSelected(e, item)) continue;
+            if (item.Color.A == 0) continue;
             // A zero weight or size hides the wires or points, as zero shading hides the fill.
             if (item.Weight == 0 && item.Geometry is Curve or Mesh or Brep or SubD) continue;
             if (item.Size == 0 && item.Geometry is PointCloud or Point3d) continue;

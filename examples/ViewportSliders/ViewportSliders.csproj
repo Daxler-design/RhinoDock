@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- rhDock compiles this folder inside Rhino; the references below only serve IDE completion. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <NuGetAudit>false</NuGetAudit>
+    <!-- rhDock compiles with the Roslyn that Rhino 8 ships: C# 11. -->
+    <LangVersion>11</LangVersion>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows')) and '$(RhinoAssemblyDir)' == ''">
+    <RhinoAssemblyDir>$(ProgramFiles)/Rhino 8/System</RhinoAssemblyDir>
+  </PropertyGroup>
+  <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('OSX')) and '$(RhinoAssemblyDir)' == ''">
+    <RhinoAssemblyDir>/Applications/Rhino 8.app/Contents/Frameworks/RhCore.framework/Resources</RhinoAssemblyDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="RhinoCommon">
+      <HintPath>$(RhinoAssemblyDir)/RhinoCommon.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Eto">
+      <HintPath>$(RhinoAssemblyDir)/Eto.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Rhino.UI">
+      <HintPath>$(RhinoAssemblyDir)/Rhino.UI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- rhDock writes RhDockPluginDir into the repo's Directory.Build.props when it opens the repo. -->
+    <Reference Include="rhDock.Rhino">
+      <HintPath>$(RhDockPluginDir)/rhDock.Rhino.rhp</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+</Project>

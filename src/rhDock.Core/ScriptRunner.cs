@@ -169,6 +169,12 @@ internal sealed class ScriptRunMethod
     {
         value = PortUnwrap.Unwrap(value);
         if (value is null || type.IsInstanceOfType(value)) return value;
+        if (type.IsEnum && value is string choice)
+        {
+            var parsed = Enum.Parse(type, choice, ignoreCase: true);
+            if (!Enum.IsDefined(type, parsed)) throw new ArgumentException("Unknown enum choice: " + choice);
+            return parsed;
+        }
         // A string is an IEnumerable<char>; enumerating one would turn unparsed list text into character codes.
         if (GetAccess(type) == PortAccess.List && value is IEnumerable sequence && value is not string)
         {

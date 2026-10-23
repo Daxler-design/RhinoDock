@@ -200,7 +200,7 @@ public sealed partial class OpenCode
         var detail = patches.Count > 0 ? string.Join("\n", patches)
             : kind == "Execute" && Str(input, "command") is { } command ? $"$ {command}" + (text is null ? "" : "\n" + text)
             : text;
-        return new ToolCall(sid, callId, title, kind, status, detail, files.Count > 0 ? files : null);
+        return new ToolCall(sid, callId, title, kind, status, detail, files.Count > 0 ? files : null, Images: content is { ValueKind: JsonValueKind.Array } blocks ? ToolImages.In(blocks.EnumerateArray(), title) : null);
     }
 
     private static PermissionAsked Permission(string sid, JsonElement data)

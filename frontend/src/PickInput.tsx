@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Crosshair, Eye, EyeOff, GripVertical, Link2, MousePointer2, Plus } from 'lucide-react';
-import { StyleGlyph, StylePopover } from './StylePopover';
+import { Crosshair, Eye, EyeOff, Link2, MousePointer2, Plus } from 'lucide-react';
+import { PickerPopover, StyleGlyph } from './StylePopover';
+import { ListRows } from './ListRows';
 import type { Action, Picking, Port } from './types';
 
 const pickingLabel = (picking: Picking) => picking.mode === 'add' ? 'Adding in Rhino…' : picking.mode === 'one' ? `Replacing element ${picking.index}…`
@@ -21,7 +22,7 @@ export function PickButton({ port, picking, act }: { port: Port; picking?: Picki
 
 /** A Color input: the Preview style picker with alpha and without size controls. A list shows one chip per color.
  *  The default swatch clears a single input (the Script default applies) or removes a list element. */
-export function ColorInput({ port, picking, act }: { port: Port; picking?: Picking | null; act: (a: Action) => void }) {
+export function ColorInput({ port, picking, act, allowDefault = true }: { port: Port; picking?: Picking | null; act: (a: Action) => void; allowDefault?: boolean }) {
   const [open, setOpen] = useState<number>();
   if (picking?.name === port.name) return <PickButton port={port} picking={picking} act={act}/>;
   const list = port.access === 'List';
@@ -33,7 +34,8 @@ export function ColorInput({ port, picking, act }: { port: Port; picking?: Picki
     if (color) next[open!] = color; else { next.splice(open!, 1); setOpen(undefined); }
     act({ action: 'input', name: port.name, value: next.length ? next.join(', ') : null });
   };
-  return <div className="color-in" data-style-anchor>
+  return <PickerPopover open={open !== undefined} onOpenChange={value => { if (!value) setOpen(undefined); }}
+    trigger={<div className="color-in">
     {list ? <div className={`pick color-chips ${colors.length ? '' : 'unpicked'}`}>
       {colors.map((c, i) => <button key={i} className={`dot ${open === i ? 'sel' : ''}`} style={{ background: c }} title={c} aria-label={`${port.name} color ${i + 1}: ${c}`} onClick={() => setOpen(open === i ? undefined : i)}/>)}
       <button className="icon-btn sm" disabled={!!picking} title="Add a color" aria-label={`Add a color to ${port.name}`} onClick={() => setOpen(colors.length)}><Plus size={12}/></button>
@@ -41,47 +43,34 @@ export function ColorInput({ port, picking, act }: { port: Port; picking?: Picki
     </div>
     : <button className={`pick ${port.value ? '' : 'unpicked'}`} disabled={!!picking} aria-expanded={open !== undefined} aria-label={`Color for ${port.name}`} onClick={() => setOpen(open === undefined ? 0 : undefined)}>
       {port.value ? <span className="dot" style={{ background: port.value }}/> : <span className="dot none"/>}<span className="truncate">{port.value ?? placeholder}</span></button>}
-    {open !== undefined && <StylePopover title={list ? `${port.name} ${open + 1}` : port.name} style={{ color: current ?? '#808080', custom: !!current, weight: 1, size: 1, shading: 0 }}
-      alpha heading="Color" note={list ? 'Default removes this color.' : 'Default uses the Script’s own value.'} onClose={() => setOpen(undefined)}
-      onChange={edit => change(edit.color)} onSample={() => act({ action: 'pick', name: port.name, mode: 'color', index: open })}/>}
-  </div>;
+    </div>}
+    title={list ? `${port.name} ${(open ?? 0) + 1}` : port.name} style={{ color: current ?? '#808080', custom: !!current, weight: 1, size: 1, shading: 0 }}
+    alpha allowDefault={allowDefault} heading="Color" note={!allowDefault ? 'Edits this list element.' : list ? 'Default removes this color.' : 'Default uses the Script’s own value.'}
+    onChange={edit => change(edit.color)} onSample={() => act({ action: 'pick', name: port.name, mode: 'color', index: open })}/>;
 }
 
 /** Details for any picked geometry input: Preview, element list with reorder and replace, and list actions. */
 export function PickDetails({ port, picking, act }: { port: Port; picking?: Picking | null; act: (a: Action) => void }) {
   const [styleOpen, setStyleOpen] = useState(false);
-  const [dragging, setDragging] = useState<number>();
-  const [over, setOver] = useState<number>();
-  const items = port.items ?? [];
   const list = port.access === 'List';
   const busy = !!picking;
   const preview = port.preview;
   return <>
-    {port.picked && preview && <><span className="adv-k">Preview</span><div className="pv-row" data-style-anchor>
-      <button className="icon-btn sm" title={preview.visible ? 'Hide Preview' : 'Show Preview'} aria-label={preview.visible ? `Hide Preview for ${port.name}` : `Show Preview for ${port.name}`}
+    {port.picked && preview && <><span className="adv-k">Preview</span><div className="pv-row">
+      <button className="icon-btn sm eyebtn" title={preview.visible ? 'Hide Preview' : 'Show Preview'} aria-label={preview.visible ? `Hide Preview for ${port.name}` : `Show Preview for ${port.name}`}
         onClick={() => act({ action: 'preview', name: port.name, visible: !preview.visible })}>{preview.visible ? <Eye size={14}/> : <EyeOff size={14}/>}</button>
-      <button className={`sw-btn ${styleOpen ? 'on' : ''}`} title="Preview style" aria-label={`Preview style for ${port.name}`} aria-expanded={styleOpen} onClick={() => setStyleOpen(!styleOpen)}><StyleGlyph family={port.family} style={preview.style}/></button>
-      {styleOpen && <StylePopover title={port.name} family={port.family} style={preview.style} onClose={() => setStyleOpen(false)}
-        onChange={style => act({ action: 'pstyle', name: port.name, style })} onSample={() => act({ action: 'pick', name: port.name, mode: 'color' })}/>}
+      <PickerPopover open={styleOpen} onOpenChange={setStyleOpen} align="start"
+        trigger={<button className={`sw-btn ${styleOpen ? 'on' : ''}`} title="Preview style" aria-label={`Preview style for ${port.name}`} aria-expanded={styleOpen} onClick={() => setStyleOpen(!styleOpen)}><StyleGlyph family={port.family} style={preview.style}/></button>}
+        title={port.name} family={port.family} style={preview.style} onChange={style => act({ action: 'pstyle', name: port.name, style })} onSample={index => act({ action: 'pick', name: port.name, mode: 'color', index })}/>
     </div></>}
-    {items.length > 0 && <div className="pick-table">
-      <div className="pt-row head"><span className="grip"/><span className="pt-i">#</span><span className="pt-el">Element</span><span className="pt-col">Ref</span><span className="pt-col">Show</span></div>
-      {items.map((item, i) => <div key={i} className={`pt-row ${item.visible && preview?.visible !== false ? '' : 'off'} ${over === i && dragging !== undefined && dragging !== i ? 'over' : ''} ${dragging === i ? 'dragging' : ''}`}
-        draggable={list && items.length > 1 && !busy} title="Click to select in Rhino"
-        onClick={() => act({ action: 'selectPicked', name: port.name, index: i })}
-        onDragStart={e => { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(i)); setDragging(i); }}
-        onDragOver={e => { if (dragging === undefined) return; e.preventDefault(); setOver(i); }}
-        onDrop={e => { e.preventDefault(); if (dragging !== undefined && dragging !== i) act({ action: 'reorder', name: port.name, from: dragging, to: i }); setDragging(undefined); setOver(undefined); }}
-        onDragEnd={() => { setDragging(undefined); setOver(undefined); }}>
-        <span className="grip" aria-hidden="true">{list && items.length > 1 && <GripVertical size={12}/>}</span>
-        <span className="pt-i">{i}</span><span className="pt-el" title={item.label}>{item.label}</span>
+    <ListRows port={port} busy={busy} act={act} heading="Element" columns={<><span className="pt-col">Ref</span><span className="pt-col">Show</span></>}
+      activate={i => { act({ action: 'activeItem', name: port.name, index: list ? i : undefined }); act({ action: 'selectPicked', name: port.name, index: i }); }}
+      render={(item, i) => <><span className="pt-el" title={item.label}>{item.label}</span>
         <button className="icon-btn sm pt-col ref" disabled={busy} title={isSubObject(port) ? 'A part of a Rhino object · click to replace this element' : 'Linked to a Rhino object · click to replace this element'} aria-label={`Replace element ${i}`}
           onClick={e => { e.stopPropagation(); act({ action: 'pick', name: port.name, mode: 'one', index: i }); }}><Link2 size={12} className="a"/><Crosshair size={13} className="b"/></button>
         <button className="icon-btn sm pt-col" title={item.visible ? 'Hide this element' : 'Show this element'} aria-label={`${item.visible ? 'Hide' : 'Show'} element ${i}`}
           onClick={e => { e.stopPropagation(); act({ action: 'element', name: port.name, index: i, visible: !item.visible }); }}>{item.visible ? <Eye size={13}/> : <EyeOff size={13}/>}</button>
-      </div>)}
-      {(port.count ?? 0) > items.length && <div className="value-more">Showing first {items.length} of {port.count}</div>}
-    </div>}
+      </>}/>
     <div className="pick-actions">
       {list && port.picked && <button className="btn-sm" disabled={busy} onClick={() => act({ action: 'pick', name: port.name, mode: 'add' })}><Plus size={11}/>Add</button>}
       {port.picked && <button className="btn-sm" title="Select these objects in Rhino" onClick={() => act({ action: 'selectPicked', name: port.name })}><MousePointer2 size={11}/>Select</button>}

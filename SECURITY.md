@@ -13,3 +13,5 @@ Loaded C# Scripts execute inside Rhino with the current user's permissions. They
 External agents use their own authentication, configuration, tools, and permissions. They can edit files and run commands according to those settings; some agents do not offer approval prompts. Review the selected agent's mode before sending a prompt.
 
 The optional development mirror can operate the active Rhino document. Keep it bound to loopback and do not expose it to a network. Logs and saved Workspace data may contain file paths, prompts, diagnostics, or project values; sanitize them before sharing.
+
+The optional rhDockConnect capability grants the current agent conversation access to Rhino document and Script tools through an authenticated loopback endpoint. Revoke it from the Connected row. Connections are scoped to the originating Rhino process/conversation/document and are revoked when the document changes or closes. Treat tool access as part of the agent's existing command permissions; it is not a sandbox for untrusted code.

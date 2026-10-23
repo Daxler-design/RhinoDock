@@ -127,5 +127,31 @@ static class AgentProtocolChecks
         codex.ReplyQuestionAsync("root", asked.RequestId, new Dictionary<string, JsonNode?> { ["color"] = "Blue" }).GetAwaiter().GetResult();
         if (response.GetAwaiter().GetResult()?["answers"]?["color"]?["answers"]?[0]?.ToString() != "Blue") throw new Exception("Codex answers must use the native answers array envelope.");
         Console.WriteLine("PASS: Codex question choices, custom field, and native reply envelope.");
+        ForkChecks();
+    }
+
+    // Side chats fork through each agent's own API; Claude Code forks with --resume <parent> --fork-session --session-id <fork>.
+    static void ForkChecks()
+    {
+        if (Harnesses.All.Where(h => h.Features.Fork).Select(h => h.Id).ToArray() is not ["claude", "codex", "opencode", "pi"])
+            throw new Exception("Claude Code, Codex, OpenCode, and Pi must advertise native forks; ACP agents and omp decide at run time.");
+        if (OperatingSystem.IsWindows()) return;
+        var folder = Path.Combine(Path.GetTempPath(), "rhdock-fork-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        var argsFile = Path.Combine(folder, "args.txt");
+        var script = Path.Combine(folder, "claude");
+        File.WriteAllText(script, $"#!/bin/sh\nprintf '%s\\n' \"$@\" > '{argsFile}'\n");
+        File.SetUnixFileMode(script, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        using var claude = new ClaudeCode(script, _ => { });
+        var fork = claude.ForkAsync(folder, "parent-id").GetAwaiter().GetResult()!;
+        _ = claude.PromptAsync(folder, fork, new AgentPrompt("hi", [], [], []));
+        for (var i = 0; i < 250 && !File.Exists(argsFile); i++) Thread.Sleep(20);
+        Thread.Sleep(100);
+        var args = File.ReadAllLines(argsFile);
+        var at = Array.IndexOf(args, "--resume");
+        if (at < 0 || args[at + 1] != "parent-id" || !args.Contains("--fork-session") || args[Array.IndexOf(args, "--session-id") + 1] != fork)
+            throw new Exception("A Claude side chat must resume the parent with --fork-session under the fork's own --session-id: " + string.Join(' ', args));
+        Directory.Delete(folder, true);
+        Console.WriteLine("PASS: harness fork flags and the Claude Code fork command line.");
     }
 }

@@ -1,0 +1,367 @@
+// Adapted from McNeel RhinoAI, MIT; see UPSTREAM.md.
+using System;
+using System.Linq;
+using System.Text.Json;
+using System.Collections;
+using System.ComponentModel;
+using System.Collections.Generic;
+
+using static rhDock.RhinoAI.Tools.ToolResult;
+using rhDock.RhinoAI.Server;
+
+using Rhino;
+
+using System.Globalization;
+using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
+
+namespace rhDock.RhinoAI.Server;
+
+// JSON-RPC 2.0 envelopes + the subset of MCP protocol types we actually emit.
+// All public fields use camelCase via JsonNamingPolicy.CamelCase, which is the
+// global default set on McpSerializer.Options.
+
+internal sealed class JsonRpcRequest
+{
+    // init-settable so the deserializer binds the wire value rather than the
+    // initializer; lets a malformed `jsonrpc` survive to where it can be checked.
+    public string Jsonrpc { get; init; } = "2.0";
+    public JsonElement? Id { get; set; }
+    public string Method { get; set; } = "";
+    public JsonElement? Params { get; set; }
+}
+
+internal sealed class JsonRpcResponse
+{
+    [JsonInclude]
+    public string Jsonrpc { get; } = "2.0";
+
+    // JSON-RPC 2.0 §5: when the server can't recover the request id (parse
+    // error, invalid request), the response must include `id: null` rather
+    // than omitting the field. The global serializer default skips nulls,
+    // so we force inclusion here.
+    [JsonIgnore(Condition = JsonIgnoreCondition.Never)]
+    public JsonElement? Id { get; set; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public object? Result { get; set; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public JsonRpcError? Error { get; set; }
+}
+
+internal sealed class JsonRpcError
+{
+    public JsonRpcErrorCode Code { get; set; }
+    public string Message { get; set; } = "";
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public object? Data { get; set; }
+}
+
+internal enum JsonRpcErrorCode
+{
+    ParseError = -32700,
+    InvalidRequest = -32600,
+    MethodNotFound = -32601,
+    InvalidParams = -32602,
+    InternalError = -32603,
+}
+
+// ----- MCP-level types --------------------------------------------------------
+
+internal sealed class InitializeResult
+{
+    [JsonInclude]
+    public string ProtocolVersion { get; } = "2024-11-05";
+    public ServerInfo ServerInfo { get; set; } = new();
+    public ServerCapabilities Capabilities { get; set; } = new();
+}
+
+internal sealed class ServerInfo
+{
+    public string Name { get; set; } = "";
+    public string Version { get; set; } = "";
+}
+
+internal sealed class ServerCapabilities
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ToolsCapability? Tools { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ResourcesCapability? Resources { get; set; }
+}
+
+internal sealed class ToolsCapability
+{
+    public bool ListChanged { get; set; }
+}
+
+internal sealed class ResourcesCapability
+{
+    public bool Subscribe { get; set; }
+    public bool ListChanged { get; set; }
+}
+
+internal sealed class ToolDescriptor
+{
+    public string Name { get; set; } = "";
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Title { get; set; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Description { get; set; }
+
+    public JsonElement InputSchema { get; set; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ToolAnnotations? Annotations { get; set; }
+}
+
+// Source - https://github.com/modelcontextprotocol/modelcontextprotocol/blob/0f786010cd27d2cb6a9f5df9b3ad0ce2c7236daa/schema/2025-06-18/schema.ts#L884
+internal sealed class ToolAnnotations
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Title { get; set; }
+    public bool ReadOnlyHint { get; set; }
+    public bool DestructiveHint { get; set; }
+}
+
+internal sealed class ListToolsResult
+{
+    public List<ToolDescriptor> Tools { get; set; } = new();
+}
+
+internal sealed class CallToolRequestParams
+{
+    public string Name { get; set; } = "";
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IDictionary<string, JsonElement>? Arguments { get; set; }
+}
+
+internal sealed class CallToolResult
+{
+    public List<ContentBlock> Content { get; set; } = new();
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool IsError { get; set; }
+}
+
+// Public so tools that need to return mixed content (e.g. a text message plus
+// an inline image) can yield ContentBlock instances directly. Tools that just
+// return a string never have to touch this type.
+internal sealed class ContentBlock
+{
+    public string Type { get; set; } = "text";
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Text { get; set; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Data { get; set; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? MimeType { get; set; }
+
+    public static ContentBlock CreateText(string text) =>
+        new() { Type = "text", Text = text };
+
+    public static ContentBlock CreateJson<V>(V value) =>
+        new() { Type = "text", Text = JsonSerializer.Serialize(value, McpSerializer.Options) };
+
+    public static ContentBlock CreateImage(byte[] data, string mimeType) =>
+        new() { Type = "image", Data = Convert.ToBase64String(data), MimeType = mimeType };
+
+    public static ContentBlock CreateImage(string base64Data, string mimeType) =>
+        new() { Type = "image", Data = base64Data, MimeType = mimeType };
+}
+
+internal sealed class ResourceDescriptor
+{
+    public string Uri { get; set; } = "";
+
+    public string Name { get; set; } = "";
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Description { get; set; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? MimeType { get; set; }
+}
+
+internal sealed class ResourceTemplateDescriptor
+{
+    public string UriTemplate { get; set; } = "";
+
+    public string Name { get; set; } = "";
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Description { get; set; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? MimeType { get; set; }
+}
+
+internal sealed class ListResourcesResult
+{
+    public List<ResourceDescriptor> Resources { get; set; } = new();
+}
+
+internal sealed class ListResourceTemplatesResult
+{
+    public List<ResourceTemplateDescriptor> ResourceTemplates { get; set; } = new();
+}
+
+internal sealed class ReadResourceRequestParams
+{
+    public string Uri { get; set; } = "";
+}
+
+internal sealed class ReadResourceResult
+{
+    public List<ResourceContent> Contents { get; set; } = new();
+}
+
+internal sealed class ResourceContent
+{
+    public string Uri { get; set; } = "";
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? MimeType { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Text { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Blob { get; set; }
+}
+
+// ----- Shared serializer options ---------------------------------------------
+
+internal static class McpSerializer
+{
+    public static JsonSerializerOptions Options { get; } = new(JsonSerializerDefaults.Web)
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        // Non-finite doubles go out as "NaN"/"Infinity" strings (the protobuf and Newtonsoft convention) rather than throwing halfway through a response.
+        NumberHandling = JsonNumberHandling.AllowReadingFromString | JsonNumberHandling.AllowNamedFloatingPointLiterals,
+        Converters = { new LenientStringConverter(), new LenientBoolConverter(), new LenientIntConverter(), new FiniteDoubleConverter() },
+        TypeInfoResolver = new DefaultJsonTypeInfoResolver(),
+    };
+}
+
+// Symmetric complement to AllowReadingFromString: bind a JSON number/bool to a string param (e.g. a numeric wire-selector index) instead of aborting the call.
+internal sealed class LenientStringConverter : JsonConverter<string>
+{
+    public override string? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        => reader.TokenType switch
+        {
+            JsonTokenType.String => reader.GetString(),
+            JsonTokenType.Number or JsonTokenType.True or JsonTokenType.False => RawScalarText(ref reader),
+            _ => throw new JsonException($"Cannot convert {reader.TokenType} to string."),
+        };
+
+    private static string RawScalarText(ref Utf8JsonReader reader)
+    {
+        using JsonDocument doc = JsonDocument.ParseValue(ref reader);
+        return doc.RootElement.GetRawText();
+    }
+
+    public override void Write(Utf8JsonWriter writer, string value, JsonSerializerOptions options)
+        => writer.WriteStringValue(value);
+
+    public override string ReadAsPropertyName(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        => reader.GetString()!;
+
+    public override void WriteAsPropertyName(Utf8JsonWriter writer, string value, JsonSerializerOptions options)
+        => writer.WritePropertyName(value);
+}
+
+// Liberal at the LLM boundary: accept "true"/"false" strings as well as JSON booleans.
+internal sealed class LenientBoolConverter : JsonConverter<bool>
+{
+    public override bool Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        => reader.TokenType switch
+        {
+            JsonTokenType.True => true,
+            JsonTokenType.False => false,
+            JsonTokenType.String => FromString(reader.GetString()),
+            _ => throw new JsonException($"Cannot convert {reader.TokenType} to bool."),
+        };
+
+    public override void Write(Utf8JsonWriter writer, bool value, JsonSerializerOptions options)
+        => writer.WriteBooleanValue(value);
+
+    private static bool FromString(string? value)
+        => bool.TryParse(value, out bool b)
+            ? b
+            : throw new JsonException($"Cannot convert \"{value}\" to bool.");
+}
+
+// Strict where the value reaches geometry: a non-finite double is refused at the bind, so it can never enter a document. Writing keeps the named literals that registering any double converter would otherwise suppress.
+internal sealed class FiniteDoubleConverter : JsonConverter<double>
+{
+    public override double Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        double value = reader.TokenType switch
+        {
+            JsonTokenType.Number => reader.GetDouble(),
+            JsonTokenType.String => FromString(reader.GetString()),
+            _ => throw new JsonException($"Cannot convert {reader.TokenType} to a number."),
+        };
+
+        return Double.IsFinite(value)
+            ? value
+            : throw new JsonException($"must be a finite number but was {Named(value)}");
+    }
+
+    public override void Write(Utf8JsonWriter writer, double value, JsonSerializerOptions options)
+    {
+        if (Double.IsFinite(value))
+            writer.WriteNumberValue(value);
+        else
+            writer.WriteStringValue(Named(value));
+    }
+
+    private static double FromString(string? value)
+        => double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed)
+            ? parsed
+            : throw new JsonException($"Cannot convert \"{value}\" to a number.");
+
+    private static string Named(double value)
+        => double.IsNaN(value) ? "NaN" : value > 0 ? "Infinity" : "-Infinity";
+}
+
+// Liberal at the LLM boundary: accept integral decimals (3.0) and numeric strings as ints.
+internal sealed class LenientIntConverter : JsonConverter<int>
+{
+    public override int Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        => reader.TokenType switch
+        {
+            JsonTokenType.Number => FromNumber(ref reader),
+            JsonTokenType.String => FromString(reader.GetString()),
+            _ => throw new JsonException($"Cannot convert {reader.TokenType} to int."),
+        };
+
+    public override void Write(Utf8JsonWriter writer, int value, JsonSerializerOptions options)
+        => writer.WriteNumberValue(value);
+
+    private static int FromNumber(ref Utf8JsonReader reader)
+        => reader.TryGetInt32(out int i) ? i : FromDecimal(reader.GetDecimal());
+
+    private static int FromString(string? value)
+    {
+        if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int i)) return i;
+        if (decimal.TryParse(value, NumberStyles.Number, CultureInfo.InvariantCulture, out decimal d)) return FromDecimal(d);
+        throw new JsonException($"Cannot convert \"{value}\" to int.");
+    }
+
+    // Every int on the tool surface is a count, size or precision, so refusing the whole call over a stray 3.7 loses more than rounding it and saying so.
+    private static int FromDecimal(decimal value)
+    {
+        if (decimal.Truncate(value) == value)
+            return (int)value;
+
+        int rounded = (int)decimal.Round(value, MidpointRounding.AwayFromZero);
+        BindNotes.Add($"{value.ToString(CultureInfo.InvariantCulture)} was rounded to {rounded}");
+        return rounded;
+    }
+}

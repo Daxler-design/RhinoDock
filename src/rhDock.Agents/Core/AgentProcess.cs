@@ -15,6 +15,7 @@ namespace rhDock.Agents;
 /// </summary>
 public static class AgentProcess
 {
+    public static string? HostToolsPath { get; set; }
     /// <summary>The process PATH plus common install folders. The agent receives it too, since it runs git, dotnet, and node.</summary>
     public static string ExtendedPath()
     {
@@ -32,6 +33,7 @@ public static class AgentProcess
         }
         string Join(params string?[] parts) => string.Join(Path.PathSeparator, parts.Where(p => p is not null));
 
+        Add(HostToolsPath);
         Add(Environment.GetEnvironmentVariable("PATH"));
         if (OperatingSystem.IsWindows())
         {

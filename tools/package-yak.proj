@@ -1,8 +1,7 @@
 <Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup>
-    <RootDir>$(MSBuildThisFileDirectory)..</RootDir>
+    <RootDir>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..'))</RootDir>
     <PackageDir>$(RootDir)/.artifacts/yak</PackageDir>
-    <PluginOutput>$(RootDir)/src/rhDock.Rhino/bin/Release/net8.0</PluginOutput>
     <YakPath Condition="$([MSBuild]::IsOSPlatform('Windows'))">$(ProgramFiles)/Rhino 8/System/yak.exe</YakPath>
     <YakPath Condition="!$([MSBuild]::IsOSPlatform('Windows'))">/Applications/Rhino 8.app/Contents/Resources/bin/yak</YakPath>
   </PropertyGroup>
@@ -10,20 +9,9 @@
   <Target Name="Build">
     <Error Condition="!Exists('$(YakPath)')" Text="Rhino 8 Yak tool not found at $(YakPath)." />
     <Error Condition="!Exists('$(RootDir)/frontend/dist/index.html')" Text="Build the frontend before packaging: cd frontend &amp;&amp; npm ci &amp;&amp; npm run build" />
-    <MSBuild Projects="$(RootDir)/src/rhDock.Rhino/rhDock.Rhino.csproj" Targets="Build" Properties="Configuration=Release" />
-    <MSBuild Projects="$(RootDir)/tools/smoke/smoke.csproj" Targets="Build" Properties="Configuration=Release" />
-    <Exec Command="dotnet &quot;$(RootDir)/tools/smoke/bin/Release/net8.0/smoke.dll&quot; --plugin-metadata &quot;$(PluginOutput)/rhDock.Rhino.rhp&quot;" EnvironmentVariables="DOTNET_ROLL_FORWARD=Major" />
-    <RemoveDir Directories="$(PackageDir)" />
-    <MakeDir Directories="$(PackageDir)" />
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)yak/manifest.yml;$(RootDir)/THIRD-PARTY-NOTICES.md;$(RootDir)/LICENSE" DestinationFolder="$(PackageDir)" />
-    <ItemGroup>
-      <PackageFiles Include="$(PluginOutput)/rhDock.Rhino.rhp" />
-      <PackageFiles Include="$(PluginOutput)/rhDock.Core.dll" />
-      <PackageFiles Include="$(PluginOutput)/rhDock.Agents.dll" />
-      <PackageFiles Include="$(PluginOutput)/DiffPlex.dll" />
-      <PackageFiles Include="$(PluginOutput)/rhDock.Rhino.deps.json" />
-    </ItemGroup>
-    <Copy SourceFiles="@(PackageFiles)" DestinationFolder="$(PackageDir)" />
+    <!-- StageYak validates versions and copies the exact plugin and CLI built here. -->
+    <MSBuild Projects="$(RootDir)/src/rhDock.Rhino/rhDock.Rhino.csproj" Targets="Build" Properties="Configuration=Release;YakDir=$(PackageDir)" />
+    <Copy SourceFiles="$(RootDir)/LICENSE" DestinationFolder="$(PackageDir)" Condition="Exists('$(RootDir)/LICENSE')" />
     <Exec Command="&quot;$(YakPath)&quot; build --platform any" WorkingDirectory="$(PackageDir)" />
   </Target>
 </Project>

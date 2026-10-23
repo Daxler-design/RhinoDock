@@ -24,6 +24,12 @@ public sealed record SavedScriptState(
     public Dictionary<string, string>? PreviewColors { get; init; }
     public Dictionary<string, PreviewStyle>? PreviewStyles { get; init; }
     public double? FrameRate { get; init; }
+    /// <summary>True when the global Preview switch is off for this Script. Per-output visibility in <see cref="HiddenPreview"/> is kept either way.</summary>
+    public bool? PreviewOff { get; init; }
+    public bool? InputPreviewOff { get; init; }
+    public bool? OutputPreviewOff { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore] public bool InputsPreviewVisible => !(InputPreviewOff ?? PreviewOff ?? false);
+    [System.Text.Json.Serialization.JsonIgnore] public bool OutputsPreviewVisible => !(OutputPreviewOff ?? PreviewOff ?? false);
 }
 
 public sealed record NumericRange(double Min, double Max, double Step);

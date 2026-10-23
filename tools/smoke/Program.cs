@@ -1,6 +1,45 @@
 using rhDock.Core;
 using rhDock.Agents;
 
+if (args is ["--git-worktree", var gitRoot, var gitBranch])
+{
+    var tree = GitWorktreeInfo.Read(gitRoot) ?? throw new Exception("Git worktree not found.");
+    if (!string.Equals(Path.GetFullPath(tree.Root), Path.GetFullPath(gitRoot), StringComparison.OrdinalIgnoreCase) || tree.Branch != gitBranch)
+        throw new Exception("Git worktree identity mismatch: " + tree);
+    Console.WriteLine("PASS: Git worktree root and branch match the checkout.");
+    return 0;
+}
+
+if (args is ["--enum-input"])
+{
+    SingleScriptSessionChecks.CheckEnum();
+    return 0;
+}
+
+if (args is ["--script-input-history"])
+{
+    ScriptInputUndoChecks.Run();
+    return 0;
+}
+
+if (args is ["--extension-editors"])
+{
+    ExtensionScriptsChecks.Run();
+    return 0;
+}
+
+if (args is ["--layout-writer", var layoutRepository])
+{
+    ScriptLayoutChecks.Writer(layoutRepository);
+    return 0;
+}
+
+if (args is ["--layout"])
+{
+    ScriptLayoutChecks.Run();
+    return 0;
+}
+
 // Disposable transport peer for offline question-response fixtures; it never invokes an agent or reads a repository.
 if (args is ["--echo-agent"])
 {
@@ -17,6 +56,13 @@ if (args is ["--ui-bridge"])
 if (args is ["--plugin-metadata", var plugin])
 {
     PluginMetadataChecks.Run(plugin);
+    return 0;
+}
+
+if (args is ["--host-tools", var cli, ..])
+{
+    await HostAccessChecks.Run(cli);
+    if (args.Length == 3) HostCatalogChecks.Run(args[2]);
     return 0;
 }
 
@@ -52,6 +98,11 @@ if (args is ["--core-only"])
 {
     ScriptProjectChecks.Run();
     SingleScriptSessionChecks.Run();
+    AutoRunPacerChecks.Run();
+    ScriptInputUndoChecks.Run();
+    InputItemsChecks.Run();
+    ExtensionScriptsChecks.Run();
+    ScriptLayoutChecks.Run();
     ExtensionSlotChecks.Run();
     Console.WriteLine("PASS: direct Script and Workspace checks.");
     return 0;

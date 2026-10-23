@@ -13,5 +13,7 @@
     <EmbeddedResource Include="Template/**" />
     <Compile Remove="ExtensionTemplate/**/*.cs" />
     <EmbeddedResource Include="ExtensionTemplate/**" />
+    <EmbeddedResource Include="../../examples/ViewportSliders/ViewportSliders.cs;../../examples/ViewportSliders/ViewportSliders.csproj;../../examples/ViewportSliders/README.md" LogicalName="rhDock.Core.ExtensionTemplate.ViewportSliders.%(Filename)%(Extension)" />
+    <EmbeddedResource Include="../../examples/ViewportSliderScript/Components/ViewportSliderScript.cs" LogicalName="rhDock.Core.ExtensionTemplate.ViewportSliders.SampleScript.cs.txt" />
   </ItemGroup>
 </Project>

@@ -44,6 +44,13 @@ public interface IAgentHarness : IDisposable
     /// or null for agents that name conversations themselves or cannot.
     /// </summary>
     Task<string?> TitleAsync(string repository, string sessionId, string message) => Task.FromResult<string?>(null);
+    /// <summary>
+    /// Forks a stored conversation into a new one that carries its history, for a side chat. The fork is the agent's own: rhDock
+    /// pastes nothing. Returns the new id, or null when the agent cannot fork (the host then seeds a new conversation instead).
+    /// </summary>
+    Task<string?> ForkAsync(string repository, string sessionId) => Task.FromResult<string?>(null);
+    /// <summary>Removes a conversation made by <see cref="ForkAsync"/> when its side chat closes. Agents whose forks are ephemeral, or that cannot delete, do nothing.</summary>
+    Task DiscardAsync(string repository, string sessionId) => Task.CompletedTask;
     event Action<AgentEvent>? Event;
 }
 
@@ -147,12 +154,16 @@ public sealed record PromptAccepted(string SessionId, string MessageId) : AgentE
 /// <summary>The conversation is rewound to before this user message; <c>Text</c> is that message.</summary>
 public sealed record Rewound(string SessionId, string MessageId, string Text) : AgentEvent(SessionId);
 public sealed record TextDelta(string SessionId, string Text) : AgentEvent(SessionId);
+/// <summary>Images the agent put in its reply (embedded raster data); they show with the reply.</summary>
+public sealed record MediaMessage(string SessionId, IReadOnlyList<AgentImage> Images) : AgentEvent(SessionId);
+/// <summary>The agent could not use the requested permission mode (for example Auto for an account, model, or policy that lacks it); rhDock returns to Ask and says why.</summary>
+public sealed record ModeUnavailable(string SessionId, string Mode, string Reason) : AgentEvent(SessionId);
 public sealed record ReasoningDelta(string SessionId, string Text) : AgentEvent(SessionId);
 /// <summary>
 /// A tool call started or changed; null fields keep their last value. Kind is Read, Edit, Delete, Move, Search, Execute, Fetch, Think, or Other;
 /// Status is Pending, InProgress, Completed, or Failed. <c>Parent</c> is the call of the subagent that made it, which shows it as one of its steps.
 /// </summary>
-public sealed record ToolCall(string SessionId, string CallId, string? Title, string? Kind, string? Status, string? Detail, IReadOnlyList<string>? Files, string? Parent = null) : AgentEvent(SessionId);
+public sealed record ToolCall(string SessionId, string CallId, string? Title, string? Kind, string? Status, string? Detail, IReadOnlyList<string>? Files, string? Parent = null, IReadOnlyList<AgentImage>? Images = null) : AgentEvent(SessionId);
 /// <summary>The agent's plan; each entry is a status (Pending, InProgress, Completed) and its text.</summary>
 public sealed record PlanUpdate(string SessionId, IReadOnlyList<(string Status, string Content)> Entries) : AgentEvent(SessionId);
 /// <summary>

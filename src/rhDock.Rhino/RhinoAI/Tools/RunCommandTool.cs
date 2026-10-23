@@ -1,0 +1,40 @@
+// Adapted from McNeel RhinoAI, MIT; see UPSTREAM.md.
+using System;
+using System.Linq;
+using System.Text.Json;
+using System.Collections;
+using System.ComponentModel;
+using System.Collections.Generic;
+
+using static rhDock.RhinoAI.Tools.ToolResult;
+using rhDock.RhinoAI.Server;
+
+using Rhino;
+
+using global::Rhino.Commands;
+
+namespace rhDock.RhinoAI.Tools;
+
+[McpServerToolType]
+internal static class RunCommandTool
+{
+    [McpServerTool("run_command", "Run Rhino Command", false, true)]
+    [Description("Execute any Rhino command string and return command window output. Example: \"_Box 0,0,0 10,10,10 _Enter\"")]
+    public static IToolResult RunCommand(
+        RhinoDoc doc,
+        [Description("Rhino command string to execute")] string command)
+    {
+        // TODO : RhinoApp.CommandWindowCaptureEnabled is not document specific
+
+        RhinoApp.CommandWindowCaptureEnabled = true;
+        bool ran = RhinoApp.RunScript(doc.RuntimeSerialNumber, command, false);
+        string[] lines = RhinoApp.CapturedCommandWindowStrings(true);
+        RhinoApp.CommandWindowCaptureEnabled = false;
+
+        ContentBlock output = ContentBlock.CreateText(lines is { Length: > 0 } ? string.Concat(lines) : "Done.");
+
+        return ran
+            ? Success(output)
+            : Failure(ToolError.Failed, output, $"Rhino did not run '{command}' to completion");
+    }
+}

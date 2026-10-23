@@ -8,9 +8,17 @@
   <ItemGroup>
     <ProjectReference Include="../../src/rhDock.Core/rhDock.Core.csproj" />
     <ProjectReference Include="../../src/rhDock.Agents/rhDock.Agents.csproj" />
+    <ProjectReference Include="../../src/rhDock.Cli/rhDock.Cli.csproj" ReferenceOutputAssembly="false" />
+    <Compile Include="../../src/rhDock.Rhino/RhinoAI/Server/*.cs" Link="RhinoAI/Server/%(Filename)%(Extension)" />
+    <Compile Include="../../src/rhDock.Rhino/RhinoAI/Tools/ToolResult.cs" Link="RhinoAI/ToolResult.cs" />
+    <Compile Include="../../src/rhDock.Rhino/RhinoAI/Tools/*Attribute.cs" Link="RhinoAI/%(Filename)%(Extension)" />
     <Compile Include="../../src/rhDock.Rhino/SnapshotSender.cs" Link="SnapshotSender.cs" />
     <Compile Include="../../src/rhDock.Rhino/AgentHost.cs" Link="AgentHost.cs" />
+    <Compile Include="../../src/rhDock.Rhino/AgentHost.Tools.cs" Link="AgentHost.Tools.cs" />
     <Compile Include="../../src/rhDock.Rhino/HostLog.cs" Link="HostLog.cs" />
     <Compile Include="../../src/rhDock.Rhino/ExtensionSlot.cs" Link="ExtensionSlot.cs" />
+    <Compile Include="../../src/rhDock.Rhino/SingleScriptHost.Undo.cs" Link="SingleScriptHost.Undo.cs" />
+    <Compile Include="../../src/rhDock.Rhino/InputItems.cs" Link="InputItems.cs" />
+    <Compile Include="../../src/rhDock.Rhino/ExtensionScripts.cs" Link="ExtensionScripts.cs" />
   </ItemGroup>
 </Project>

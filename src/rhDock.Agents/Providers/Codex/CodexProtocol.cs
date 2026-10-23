@@ -162,7 +162,8 @@ public sealed partial class Codex
                 Emit(thread, new ToolCall(tid, id, summary, "Edit", status, diff, files));
                 break;
             case "mcpToolCall":
-                Emit(thread, new ToolCall(tid, id, ToolPreview.Mcp(Str(item, "server") ?? "mcp", Str(item, "tool") ?? "tool"), "Other", status, Str(Obj(item, "error"), "message"), null));
+                var mcpTitle = ToolPreview.Mcp(Str(item, "server") ?? "mcp", Str(item, "tool") ?? "tool");
+                Emit(thread, new ToolCall(tid, id, mcpTitle, "Other", status, Str(Obj(item, "error"), "message"), null, Images: ToolImages.In(Arr(Obj(item, "result"), "content"), mcpTitle)));
                 break;
             case "webSearch":
                 Emit(thread, new ToolCall(tid, id, $"Search the web for {Str(item, "query")}", "Fetch", status, null, null));

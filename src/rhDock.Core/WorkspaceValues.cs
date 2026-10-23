@@ -91,6 +91,15 @@ public static class AtomicJson
 /// <summary>Transient display settings for one geometry input or output. Null fields use the host default.</summary>
 public sealed record PreviewStyle(string? Color, int? Weight, int? Size, int? Shading)
 {
+    public PreviewChannel? Edges { get; init; }
+    public PreviewChannel? Fill { get; init; }
     public bool IsValid => (Color is null || System.Text.RegularExpressions.Regex.IsMatch(Color, "^#[0-9A-Fa-f]{6}$"))
-        && Weight is null or (>= 0 and <= 32) && Size is null or (>= 0 and <= 64) && Shading is null or (>= 0 and <= 100);
+        && Weight is null or (>= 0 and <= 32) && Size is null or (>= 0 and <= 64) && Shading is null or (>= 0 and <= 100)
+        && (Edges?.IsValid ?? true) && (Fill?.IsValid ?? true);
+}
+
+/// <summary>Independent RGB override and opacity. Null color restores automatic color.</summary>
+public sealed record PreviewChannel(string? Color, int Opacity)
+{
+    public bool IsValid => (Color is null || System.Text.RegularExpressions.Regex.IsMatch(Color, "^#[0-9A-Fa-f]{6}$")) && Opacity is >= 0 and <= 100;
 }

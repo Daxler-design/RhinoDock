@@ -17,5 +17,7 @@ for (const file of readdirSync(join(folder, 'assets'))) {
   if (file.endsWith('.css')) html = html.replace(`<link rel="stylesheet" crossorigin href="./assets/${file}">`, () => `<style>${contents}</style>`);
 }
 if (html.includes('src="./assets/') || html.includes('href="./assets/')) throw new Error('Frontend still references external assets');
+// Vite resolves lazy chunk paths (such as code highlighting) against document.baseURI, which is about:blank for the string-loaded panel page; main.tsx gives that page a base URL.
+if (/new URL\("assets\//.test(html) && !html.includes('file:///rhdock/')) throw new Error('Frontend resolves chunk paths against document.baseURI but main.tsx sets no base URL');
 writeFileSync(index, html);
 rmSync(join(folder, 'assets'), { recursive: true });

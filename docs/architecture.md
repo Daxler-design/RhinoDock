@@ -15,6 +15,7 @@ Working Repo -> Roslyn / ScriptRunner -> SingleScriptSession
 - `rhDock.Rhino` owns commands, document binding, picks, UI-thread dispatch, Solver pacing, Preview, Bake, and the Eto WebView. `SingleScriptHost` adapts the Core Session; `SingleScriptPanel` exposes explicit actions and bounded JSON snapshots.
 - `rhDock.Agents` owns agent process lifetime, protocol adapters, capability metadata, and bounded text checkpoints. It is independent of Rhino and Script state. `AgentHost` in the Rhino module retains one harness per open Conversation and dispatches updates to the panel.
 - Extensions (in `rhDock.Rhino`) are folders in a separate Extension Repo. Each compiles into its own collectible load context and activates before the previous generation is disposed and unloaded. The public contract is `rhDock.Extensions`: `IRhDockExtension` and a small `ExtensionContext` (`OpenView`, `Scripts`, `StartProcess`, `Log`). Every member is a compatibility promise, so new capabilities start inside an Extension. Only copies of .NET or RhinoCommon values cross between Extensions and Scripts.
+- `rhDock.Cli` is the bundled `rhdock` command-line bridge to an authenticated, revocable host connection. It contains no agent loop.
 - `frontend` renders snapshots with React. It sends actions through the Eto bridge and does not own geometry or execution state. Production assets are embedded in the plugin as one offline HTML file.
 
 ## Execution and lifetime
@@ -38,3 +39,13 @@ The WebView sends narrowly named actions and receives plain JSON. Revision ident
 Agent protocols and credentials stay in their adapters and native agent configuration. Conversations retain independent processes and background activity. Agent callbacks update state under a lock, then dispatch UI refresh outside that lock. Never block the UI thread while holding a conversation lock.
 
 The optional Mirror (`RhinoDockMirror`) serves the panel and Extension windows to a browser on a loopback port behind a per-start token, and refuses other origins. The installed frontend is self-contained; using the Mirror is an explicit action.
+
+## Preview channels and panel history
+
+PreviewStyle retains legacy color/shading fields and adds optional Edges and Fill channels. Each channel has an optional RGB override and opacity. PreviewItem prepares host-owned geometry, materials, and face/edge caches once per rebuild. Automatic colored meshes use the indexed shaded overload at partial opacity because the ordinary overload suppresses vertex colors. Explicit fill overrides clear colors only on the preview copy.
+
+AgentHost publishes a history cursor and an initial suffix of 100 items. A valid earlier-page request extends the suffix; stale cursors are rejected. WindowedTranscript uses existing MessageScroller visibility, measured placeholders, and retained disclosure state. This is panel publication/rendering control; the harness replay remains in host memory and no second persistent transcript store is introduced.
+
+## Host tools
+
+HostConnection owns a per-conversation loopback capability and retry outcomes. HostTools combines Script-session operations with the vendored RhinoAI tool registry. Both reach existing Rhino host operations; Core remains independent of Rhino. The harness owns the agent loop, model context, and tools outside this bridge. See the vendored RhinoAI UPSTREAM.md and THIRD-PARTY-NOTICES.md for provenance.

@@ -54,6 +54,8 @@ function Scrub({ value, range, int, limits, update, commit }: { value: number; r
     if (e.button !== 0) return;
     e.preventDefault();
     const handle = e.currentTarget;
+    // Pointer-down is prevented for dragging; explicitly leave the text editor so history keys reach the panel.
+    handle.focus();
     const origin = Number.isFinite(value) ? value : range.min;
     const low = Math.max(range.min, limits?.min ?? -Infinity), high = Math.min(range.max, limits?.max ?? Infinity);
     let travel = 0, current = String(origin);

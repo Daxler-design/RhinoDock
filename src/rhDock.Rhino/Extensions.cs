@@ -276,6 +276,7 @@ internal sealed class ExtensionHost : IDisposable
     {
         watcher = new(compiler);
         SingleScriptHost.Current.StateChanged += OnScriptsChanged;
+        SingleScriptHost.Current.InputReordered += OnInputReordered;
     }
 
     // Session changes reach Extensions once per UI turn, outside the call that changed the Session, so a handler that
@@ -291,16 +292,24 @@ internal sealed class ExtensionHost : IDisposable
         });
     }
 
+    private void OnInputReordered(ScriptInputReorder move)
+    {
+        foreach (var entry in entries.ToArray()) entry.Context?.Scripts.RaiseReordered(move);
+    }
+
+    internal static ExtensionScripts? Editor(string typeName, bool list = false) =>
+        current?.entries.FirstOrDefault(e => e.Context?.Scripts.Edits(typeName, list) == true)?.Context?.Scripts;
+
     /// <summary>The enabled Extension that edits inputs of this type, or null.</summary>
-    public static string? EditorFor(string typeName) =>
-        current?.entries.FirstOrDefault(e => e.Context?.Scripts.Edits(typeName) == true)?.Name;
+    public static string? EditorFor(string typeName, bool list = false) =>
+        current?.entries.FirstOrDefault(e => e.Context?.Scripts.Edits(typeName, list) == true)?.Name;
 
     /// <summary>Hands an input of the active Script to the Extension that edits its type.</summary>
-    public void Edit(string input) => Try(() =>
+    public void Edit(string input, int? index) => Try(() =>
     {
         var port = SingleScriptHost.Current.Session.Selected?.Ports.FirstOrDefault(p => p.Name == input && !p.IsOutput);
         var type = port is null ? null : PortTypeName.Element(port.TypeName);
-        if (type is not null && entries.FirstOrDefault(e => e.Context?.Scripts.Edits(type) == true)?.Context is { } context) context.Scripts.Edit(type, input);
+        if (type is not null && entries.FirstOrDefault(e => e.Context?.Scripts.Edits(type, port!.Access == PortAccess.List) == true)?.Context is { } context) context.Scripts.Edit(type, input, index);
     });
 
     public string? Repository { get; private set; }
@@ -324,12 +333,6 @@ internal sealed class ExtensionHost : IDisposable
         Enable(ExtensionRepositoryTemplate.StarterName, true);
     });
 
-    public void NewExtension(string name) => Try(() =>
-    {
-        ExtensionRepositoryTemplate.CreateExtension(Repository ?? throw new InvalidOperationException("Open an Extension Repo first."), name);
-        Enable(name, true);
-    });
-
     public void SetEnabled(string name, bool on) => Try(() => Enable(name, on));
 
     public void SetStartup(string name, bool on) => Try(() =>
@@ -343,10 +346,10 @@ internal sealed class ExtensionHost : IDisposable
 
     public void Reload(string name) => Try(() => { if (Find(name) is { } entry) Reload(entry, reloadPages: true); });
 
-    public void Reveal(string? name) => Try(() =>
+    public void Reveal() => Try(() =>
     {
         if (Repository is null) return;
-        Process.Start(new ProcessStartInfo(name is null ? Repository : Path.Combine(Repository, name)) { UseShellExecute = true });
+        Process.Start(new ProcessStartInfo(Repository) { UseShellExecute = true });
     });
 
     /// <summary>The Extensions tab state: the repo, its Extensions, and the last action error.</summary>
@@ -525,6 +528,7 @@ internal sealed class ExtensionHost : IDisposable
     public void Dispose()
     {
         SingleScriptHost.Current.StateChanged -= OnScriptsChanged;
+        SingleScriptHost.Current.InputReordered -= OnInputReordered;
         foreach (var entry in entries)
         {
             watcher.Unregister(entry.Slot.Folder);

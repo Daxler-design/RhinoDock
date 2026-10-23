@@ -67,22 +67,56 @@ internal sealed partial class AgentHost
     private string? ShownTitle() => title ?? AgentPrompt.Title(items.FirstOrDefault(i => i.Kind == "user")?.Text);
 
     // Done means unread: a turn that finished while another conversation was on screen, until this one is opened.
-    private string? ActivityStatus() => permission is not null || question is not null ? "input"
+    private string? ActivityStatus() => hostPermission is not null || permission is not null || question is not null ? "input"
         : status is "working" or "starting" ? "running" : status is "error" or "missing" || turnStop == "error" ? "error" : unread ? "done" : null;
     private bool unread;
 
-    private sealed record OpenView(string Id, string AgentId, string? Repository, string? SessionId, string? Title, string? Activity);
+    // A side chat: the conversation it came from, the passage it is about, and the message around that passage. Forked means the agent's own
+    // fork carries the history; otherwise the first prompt carries the message as a side-context block. Never shown in the message box.
+    private sealed record SideOf(string ParentViewId, string? ParentSessionId, string Quote, string Context);
+    private SideOf? side;
+    private bool forked;
+
+    // Conversations made for side chats, kept out of the conversation list across restarts where the agent stores forks as ordinary conversations.
+    private static readonly object hiddenGate = new();
+    private const int MaxHidden = 500;
+    private static List<string>? hidden;
+    private static List<string> Hidden()
+    {
+        if (hidden is not null) return hidden;
+        try { hidden = JsonSerializer.Deserialize<List<string>>(RhinoDockPlugin.Instance?.Settings.GetString("AgentSideChats", "[]") ?? "[]") ?? []; }
+        catch (JsonException) { hidden = []; }
+        return hidden;
+    }
+    private static void Hide(string id)
+    {
+        lock (hiddenGate)
+        {
+            var list = Hidden();
+            list.Add(id);
+            if (list.Count > MaxHidden) list.RemoveRange(0, list.Count - MaxHidden);
+            RhinoDockPlugin.Instance?.Settings.SetString("AgentSideChats", JsonSerializer.Serialize(list));
+        }
+    }
+    private static bool IsHidden(string id) { lock (hiddenGate) return Hidden().Contains(id); }
+
+    // SideOf: the conversation a side chat belongs to; a side chat is listed in that conversation's side-chat tray, never in the conversation list.
+    private sealed record OpenView(string Id, string AgentId, string? Repository, string? SessionId, string? Title, string? Activity, string? SideOf = null);
     private OpenView View()
     {
-        lock (gate) return new(viewId, agentId, repositoryKey ?? sessionCwd, sessionId, ShownTitle(), ActivityStatus());
+        lock (gate) return new(viewId, agentId, repositoryKey ?? sessionCwd, sessionId,
+            ShownTitle() ?? (side is { } s ? (s.Quote.Length > 60 ? s.Quote[..60] + "…" : s.Quote) : null), ActivityStatus(), side?.ParentViewId);
     }
 
     // ponytail: every snapshot carries the whole bounded conversation; send deltas if long conversations make the panel lag.
-    private const int MaxItems = 200, MaxText = 12000, MaxDetail = 4000, MaxPictures = 48, MaxConversations = 50, MaxAttachments = 8,
+    private const int MaxDetail = 4000, MaxConversations = 50, MaxAttachments = 8,
         MaxImageBase64 = 8 * 1024 * 1024, MaxFiles = 3000, MaxCheckpoints = 10;
     private readonly object gate = new();
     private readonly SemaphoreSlim work = new(1, 1);
     private readonly List<Item> items = [];
+    private int historyStart;
+    private bool historyExpanded;
+    private const int HistoryPageSize = 100;
     private readonly Dictionary<int, string> pictures = [];
     private readonly List<Attachment> attachments = [];
     private readonly List<Queued> queue = [];
@@ -92,7 +126,7 @@ internal sealed partial class AgentHost
     private AgentInfo? info;
     private AgentCatalog catalog = new([], [], [], true);
     private string status = "idle"; // idle, starting, ready, working, missing, error
-    private string mode = "ask"; // ask, edits, plan, all
+    private string mode = "ask"; // ask, edits, plan, auto (the agent's own review), all
     private string? error, sessionId, sessionCwd, title;
     private Conversation[] conversations = [];
     private PermissionAsked? permission;
@@ -135,6 +169,7 @@ internal sealed partial class AgentHost
     public string ViewId => viewId;
     private string[] files = [];
     private RepositoryCheckpoint? baseline;
+    private GitWorktreeInfo? worktree;
     private IReadOnlyList<FileChange> changes = [];
     private bool refreshQueued;
 
@@ -151,9 +186,15 @@ internal sealed partial class AgentHost
 
     // Title is the agent's own name, null when unnamed; Preview is the first prompt, shown until there is a name.
     private sealed record Conversation(string Id, string? Title, string? UpdatedAt, string? Preview);
-    private sealed record Attachment(int Id, string Name, string Kind, string? MimeType, string? Data, string? Path, string? Thumb);
+    private sealed record Attachment(int Id, string Name, string Kind, string? MimeType, string? Data, string? Path, string? Thumb, string? Text = null);
     // Steer: pending for the running turn, sent when its current tool call finishes so a stray Enter can still be removed.
-    private sealed record Queued(int Id, string Repository, string Text, AgentPrompt Prompt, string[] Chips, int[] Images, bool Steer = false);
+    private sealed record Queued(int Id, string Repository, string Text, AgentPrompt Prompt, string[] Chips, int[] Images, bool Steer = false)
+    {
+        // What the composer held, so Edit can put a queued message back as it was: the page's own draft (text, comment cards,
+        // mentions, the context switch) and the attachments the message took with it.
+        public string? Draft { get; init; }
+        public Attachment[] Attached { get; init; } = [];
+    }
 
     private static string? PathFor(string id) => RhinoDockPlugin.Instance?.Settings.GetString("AgentPath." + id,
         id == Harnesses.DefaultId ? RhinoDockPlugin.Instance.Settings.GetString("AgentPath", "") : "") is { Length: > 0 } path ? path : null;
@@ -166,17 +207,20 @@ internal sealed partial class AgentHost
         lock (gate)
             return new
             {
-                viewId,
-                status, error, agent = info is null ? null : $"{info.Name} {info.Version}".Trim(), executable = info?.Executable, userPath = UserPath, repository = repositoryKey ?? sessionCwd, sessionId, title = ShownTitle(),
+                viewId, hostTools = new { connected = HostConnected, error = hostConnectionError },
+                side = side is { } s ? new { parentViewId = s.ParentViewId, parentSessionId = s.ParentSessionId, quote = s.Quote, forked } : null,
+                status, error, agent = info is null ? null : $"{info.Name} {info.Version}".Trim(), executable = info?.Executable, userPath = UserPath, repository = repositoryKey ?? sessionCwd, worktree, sessionId, title = ShownTitle(),
                 usage, turn = new { input = turn?.Input, output = turn?.Output, cacheRead = turn?.CacheRead, cacheWrite = turn?.CacheWrite, reasoning = turn?.Reasoning, total = turn?.Total, elapsedMs },
                 favorites = favorites.Where(f => f.StartsWith(agentId + ":", StringComparison.Ordinal)).Select(f => f[(agentId.Length + 1)..]).ToArray(),
-                log = HostLog.Path, mode = Harnesses.Get(agentId).Features.Permissions ? mode : "all", images = catalog.Images, canLoad = catalog.LoadsConversations, agentId, agentName = Harnesses.Get(agentId).Name, features = Harnesses.Get(agentId).Features,
+                log = HostLog.Path, mode = Harnesses.Get(agentId).Features.Permissions ? (mode == "auto" && Harnesses.Get(agentId).Features.AutoMode is null ? "ask" : mode) : "all", images = catalog.Images, canLoad = catalog.LoadsConversations, agentId, agentName = Harnesses.Get(agentId).Name, features = Harnesses.Get(agentId).Features,
                 agents = Harnesses.All.Select(h => new { id = h.Id, name = h.Name, installed = installed.GetValueOrDefault(h.Id) is not null, install = h.Install, docs = h.Docs,
                     activities = views.Where(v => v.AgentId == h.Id && v.Repository == (repositoryKey ?? sessionCwd) && v.Activity is not null).Select(v => v.Activity).ToArray() }).ToArray(),
                 plan = plan.Select(p => new { status = p.Status, content = p.Content }).ToArray(),
-                items = items.Select(i => new { id = i.Id, kind = i.Kind, text = i.Text, title = i.Title, toolKind = i.ToolKind, status = i.Status, detail = i.Detail,
+                history = new { before = historyStart < items.Count ? items[historyStart].Id : 0, hasMore = historyStart > 0, total = items.Count },
+                items = items.Skip(historyStart).Select(i => new { id = i.Id, kind = i.Kind, text = i.Text, title = i.Title, toolKind = i.ToolKind, status = i.Status, detail = i.Detail,
                     files = i.Files, chips = i.Chips, images = i.Images, callId = i.ToolCallId, parent = i.Parent, elapsedMs = i.ElapsedMs, checkpoint = i.MessageId is not null && Harnesses.Get(agentId).Features.Rewind }).ToArray(),
-                conversations = views.Where(v => v.AgentId == agentId && v.Repository == (repositoryKey ?? sessionCwd) && (v.SessionId is not null || v.Activity is not null || v.Id == viewId))
+                sideChats = views.Where(v => v.SideOf == viewId).Select(v => new { viewId = v.Id, title = v.Title, activity = v.Activity }).ToArray(),
+                conversations = views.Where(v => v.SideOf is null && v.AgentId == agentId && v.Repository == (repositoryKey ?? sessionCwd) && (v.SessionId is not null || v.Activity is not null || v.Id == viewId))
                     .Select(v => new { id = v.SessionId ?? "local:" + v.Id, title = v.Title, updatedAt = (string?)null, activity = v.Activity, open = v.Id == viewId, live = true })
                     .Concat(conversations.Where(c => !views.Any(v => v.AgentId == agentId && v.Repository == (repositoryKey ?? sessionCwd) && v.SessionId == c.Id))
                         .Select(c => new { id = c.Id, title = c.Title ?? c.Preview, updatedAt = c.UpdatedAt, activity = (string?)null, open = c.Id == sessionId, live = false })).ToArray(),
@@ -185,11 +229,11 @@ internal sealed partial class AgentHost
                 commands = catalog.Commands.Select(c => new { name = c.Name, description = c.Description ?? "" }).ToArray(),
                 skills = catalog.Skills.Select(s => new { id = s.Id, name = s.Name, description = s.Description ?? "" }).ToArray(),
                 attachments = attachments.Select(a => new { id = a.Id, name = a.Name, kind = a.Kind, thumb = a.Thumb }).ToArray(),
-                queued = queue.Select(q => new { id = q.Id, text = q.Text, steer = q.Steer }).ToArray(),
+                queued = queue.Select(q => new { id = q.Id, text = q.Text, steer = q.Steer, draft = q.Draft }).ToArray(),
                 rewound = rewound is { } r ? new { id = r.MessageId, text = r.Text, filesRestored } : null,
                 files = filesWanted ? files : null,
                 changes = changes.Select(c => new { path = c.Path, status = c.Status, added = c.Added, removed = c.Removed, diff = c.Diff }).ToArray(),
-                permission = permission is { } p ? new { title = p.Title, kind = p.Kind, detail = p.Detail, options = Decisions } : null,
+                permission = (hostPermission ?? permission) is { } p ? new { title = p.Title, kind = p.Kind, detail = p.Detail, options = Decisions } : null,
                 question = question is { } q ? new { id = q.RequestId, title = q.Title, fields = q.Fields.Select(f => new { key = f.Key, title = f.Title, description = f.Description, type = f.Type,
                     options = f.Options.Select(o => new { value = o.Value, label = o.Label, description = o.Description }).ToArray(), custom = f.Custom, required = f.Required }).ToArray() } : null,
             };
@@ -217,7 +261,94 @@ internal sealed partial class AgentHost
             var found = Harnesses.Installed(PathFor);
             lock (gate) installed = found;
             await EnsureStarted(repository);
+            await StartSide(repository);
             await ListConversations();
+        });
+    }
+
+    /// <summary>
+    /// Opens a side chat about a passage of this conversation, in Plan: the agent's own fork of it where the agent can fork, else a new
+    /// conversation whose first prompt carries <paramref name="context"/> (the message around the passage) as a hidden context block.
+    /// </summary>
+    public void Side(string repository, string quote, string context)
+    {
+        string? parent;
+        lock (gate) parent = sessionCwd == repository ? sessionId : null;
+        var next = OpenConversation(repository, agentId);
+        lock (next.gate) { next.mode = "plan"; next.side = new SideOf(viewId, parent, quote, context); }
+        next.Connect(repository);
+    }
+
+    // Runs inside Connect, before any prompt can be sent, so the first prompt goes to the fork. A failed fork falls back to seeding.
+    private async Task StartSide(string repository)
+    {
+        string? parent;
+        lock (gate) parent = side is { ParentSessionId: { } p } && sessionId is null && !forked ? p : null;
+        if (parent is null || harness is not { } agent) return;
+        string? id = null;
+        try { id = await agent.ForkAsync(repository, parent); }
+        catch (Exception ex) { Log($"[{agentId}/{viewId}] fork failed, seeding instead: {ex.Message}"); }
+        if (id is null) return;
+        Hide(id);
+        lock (gate) { sessionId = id; forked = true; }
+        await RefreshCatalog(repository);
+    }
+
+    /// <summary>
+    /// Returns from this side chat to its conversation and keeps the side chat open, listed in that conversation's side-chat tray until
+    /// closed there. When the conversation is no longer open the side chat is closed instead.
+    /// </summary>
+    public void BackFromSide(string repository)
+    {
+        SideOf? of;
+        lock (gate) of = side;
+        if (of is null) return;
+        if (OpenHosts().FirstOrDefault(h => h.viewId == of.ParentViewId) is { } parent) parent.Activate();
+        else CloseSide(repository);
+    }
+
+    /// <summary>Shows a side chat from the active conversation's side-chat tray.</summary>
+    public void OpenSide(string id)
+    {
+        if (OpenHosts().FirstOrDefault(h => h.viewId == id && h.View().SideOf is not null) is { } chat) chat.Activate();
+    }
+
+    /// <summary>Closes the side chat with view <paramref name="id"/> from the tray, or this one when it is a side chat and no id is given.</summary>
+    public void CloseSide(string repository, string? id)
+    {
+        if (string.IsNullOrEmpty(id) || id == viewId) { CloseSide(repository); return; }
+        OpenHosts().FirstOrDefault(h => h.viewId == id && h.View().SideOf is not null)?.CloseSide(repository);
+    }
+
+    /// <summary>
+    /// Closes this side chat; when it is the one shown, its conversation is shown again. A fork the agent stored as an ordinary conversation
+    /// is deleted where it can be.
+    /// </summary>
+    public void CloseSide(string repository)
+    {
+        SideOf? of;
+        string? id;
+        bool wasForked;
+        IAgentHarness? agent;
+        lock (gate) (of, id, wasForked, agent) = (side, sessionId, forked, harness);
+        if (of is null) return;
+        bool shown;
+        lock (hostsGate) shown = current == this;
+        if (shown)
+        {
+            var parent = OpenHosts().FirstOrDefault(h => h.viewId == of.ParentViewId);
+            if (parent is not null) parent.Activate();
+            else if (of.ParentSessionId is { } stored) Load(repository, stored);
+            else OpenConversation(repository, agentId).Connect(repository);
+        }
+        lock (hostsGate) hosts.Remove(this);
+        if (!shown) Changed(); // the shown conversation's side-chat tray drops this one
+        _ = Task.Run(async () =>
+        {
+            if (wasForked && agent is not null && id is not null)
+                try { await agent.DiscardAsync(repository, id); }
+                catch (Exception ex) { Log($"[{agentId}/{viewId}] discard {ex.Message}"); }
+            Stop();
         });
     }
 
@@ -234,7 +365,7 @@ internal sealed partial class AgentHost
     /// Sends a prompt. While a turn runs it is queued for after the turn, or with <paramref name="steer"/> held for the running turn.
     /// <paramref name="context"/> and <paramref name="files"/> come from the panel's chips and mentions.
     /// </summary>
-    public void Prompt(string repository, string text, IReadOnlyList<(string Name, string Text)> context, IReadOnlyList<string> files, string[] chips, bool steer = false)
+    public void Prompt(string repository, string text, IReadOnlyList<(string Name, string Text)> context, IReadOnlyList<string> files, string[] chips, bool steer = false, string? draft = null)
     {
         lock (gate)
         {
@@ -244,6 +375,8 @@ internal sealed partial class AgentHost
             foreach (var a in attachments)
                 if (a.Kind == "image" && a.Data is not null) { images.Add(new AgentImage(a.MimeType ?? "image/png", a.Data, a.Name)); sent.Add(a.Id); }
                 else if (a.Path is not null) { paths.Add(a.Path); chips = [.. chips, a.Name]; }
+            context = [.. context, .. attachments.Where(a => a.Text is not null).Select(a => ("viewport", a.Text!))];
+            var attached = attachments.ToArray();
             attachments.Clear();
             var prompt = new AgentPrompt(text, context, paths, images, Mode: mode);
             var slash = text.StartsWith('/') ? text[1..].Split((char[]?)null, 2, StringSplitOptions.RemoveEmptyEntries) : [];
@@ -253,7 +386,8 @@ internal sealed partial class AgentHost
             else if (slash.Length > 0 && catalog.Skills.FirstOrDefault(k => k.Id.Equals(slash[0], StringComparison.OrdinalIgnoreCase) || k.Name.Equals(slash[0], StringComparison.OrdinalIgnoreCase)) is { } skill)
                 prompt = prompt with { Skill = skill.Id, Text = rest };
             var queued = new Queued(NextId(), repository, text, prompt, chips, [.. sent],
-                steer && Harnesses.Get(agentId).Features.Steer && status == "working" && sessionId is not null && !prompt.Compact && prompt.Command is null);
+                steer && Harnesses.Get(agentId).Features.Steer && status == "working" && sessionId is not null && !prompt.Compact && prompt.Command is null)
+                { Draft = draft is { Length: <= 20000 } ? draft : null, Attached = attached };
             if (status is "starting" or "working") { queue.Add(queued); Changed(); return; }
             Send(queued);
         }
@@ -281,14 +415,14 @@ internal sealed partial class AgentHost
     // Callers hold the gate.
     private void SteerNow(Queued prompt)
     {
-        var item = new Item { Id = NextId(), Kind = "user", Text = Trim(prompt.Text, MaxText), Chips = prompt.Chips, Images = prompt.Images };
+        var item = new Item { Id = NextId(), Kind = "user", Text = prompt.Text, Chips = prompt.Chips, Images = prompt.Images };
         Add(item);
         var id = sessionId!;
         if (harness is { } h) Background(async () =>
         {
             var before = RepositoryCheckpoint.Capture(prompt.Repository);
             lock (gate) checkpoints["item:" + item.Id] = before;
-            await h.SteerAsync(prompt.Repository, id, prompt.Prompt with { Mode = mode });
+            await h.SteerAsync(prompt.Repository, id, WithHostTools(prompt.Prompt) with { Mode = mode });
         });
         Changed();
     }
@@ -296,7 +430,7 @@ internal sealed partial class AgentHost
     // Callers hold the gate.
     private void Send(Queued prompt)
     {
-        var item = new Item { Id = NextId(), Kind = "user", Text = Trim(prompt.Text, MaxText), Chips = prompt.Chips, Images = prompt.Images };
+        var item = new Item { Id = NextId(), Kind = "user", Text = prompt.Text, Chips = prompt.Chips, Images = prompt.Images };
         Add(item);
         status = "working";
         error = null;
@@ -316,7 +450,9 @@ internal sealed partial class AgentHost
             if (id is null)
             {
                 id = await agent.CreateAsync(prompt.Repository);
-                lock (gate) { sessionId = id; sessionCwd = prompt.Repository; }
+                bool sideChat;
+                lock (gate) { sessionId = id; sessionCwd = prompt.Repository; sideChat = side is not null; }
+                if (sideChat) Hide(id);
             }
             var checkpoint = RepositoryCheckpoint.Capture(prompt.Repository);
             lock (gate)
@@ -340,7 +476,9 @@ internal sealed partial class AgentHost
                 string? nativeMode;
                 lock (gate) { sendingMode = mode; nativeMode = NativeMode(catalog.Options.FirstOrDefault(o => o.Id == "mode"), sendingMode); }
                 if (nativeMode is not null) await agent.SetOptionAsync(prompt.Repository, id, "mode", nativeMode);
-                result = await agent.PromptAsync(prompt.Repository, id, prompt.Prompt with { Mode = sendingMode });
+                var sending = prompt.Prompt;
+                lock (gate) if (created && side is { Context.Length: > 0 } seed && !forked) sending = sending with { Context = [("side-context", seed.Context), .. sending.Context] };
+                result = await agent.PromptAsync(prompt.Repository, id, WithHostTools(sending) with { Mode = sendingMode });
             }
             finally { lock (gate) { elapsedMs = timer.Elapsed.TotalMilliseconds; item.ElapsedMs = elapsedMs; permission = null; question = null; permissions.Clear(); questions.Clear(); } }
             bool shown;
@@ -378,8 +516,22 @@ internal sealed partial class AgentHost
         Changed();
     }
 
+    /// <summary>Takes a message out of the queue to edit it: its attachments return to the composer; the page restores its draft.</summary>
+    public bool EditQueued(int id)
+    {
+        lock (gate)
+        {
+            if (queue.FirstOrDefault(q => q.Id == id) is not { } queued) return false;
+            queue.Remove(queued);
+            attachments.AddRange(queued.Attached.Take(Math.Max(0, MaxAttachments - attachments.Count)));
+        }
+        Changed();
+        return true;
+    }
+
     public void Cancel()
     {
+        lock (gate) hostApproval?.TrySetResult(null);
         string? id;
         lock (gate) { id = sessionId; queue.Clear(); permission = null; question = null; permissions.Clear(); questions.Clear(); }
         Changed();
@@ -388,7 +540,7 @@ internal sealed partial class AgentHost
 
     public void NewConversation(string repository)
     {
-        lock (gate) if (sessionId is null && items.Count == 0) return;
+        lock (gate) if (sessionId is null && items.Count == 0 && !HostConnected) return;
         OpenConversation(repository).Connect(repository);
     }
 
@@ -421,6 +573,7 @@ internal sealed partial class AgentHost
     /// <summary>Answers the open permission request with AllowOnce, AllowAlways, or RejectOnce; null rejects it.</summary>
     public void Answer(string? choiceId)
     {
+        lock (gate) if (hostApproval is { } pending) { pending.TrySetResult(choiceId); return; }
         PermissionAsked? open;
         lock (gate) { open = permission; permission = permissions.FirstOrDefault(); if (permission is not null) permissions.RemoveAt(0); }
         Changed();
@@ -455,7 +608,7 @@ internal sealed partial class AgentHost
     /// <summary>Ask, Accept edits, Plan, or Allow all. Plan also switches the agent to its plan mode when it has one.</summary>
     public void SetMode(string value)
     {
-        if (value is not ("ask" or "edits" or "plan" or "all")) return;
+        if (value is not ("ask" or "edits" or "plan" or "all" or "auto") || value == "auto" && Harnesses.Get(agentId).Features.AutoMode is null) return;
         string? agentMode;
         lock (gate)
         {
@@ -492,14 +645,14 @@ internal sealed partial class AgentHost
         else Changed();
     }
 
-    public void Attach(string name, string? mimeType, string? data, string? path, string? thumb)
+    public void Attach(string name, string? mimeType, string? data, string? path, string? thumb, string? text = null)
     {
         lock (gate)
         {
             if (attachments.Count >= MaxAttachments) { error = $"At most {MaxAttachments} attachments per message."; Changed(); return; }
             if (data is { Length: > MaxImageBase64 }) { error = "Images over 6 MB cannot be attached."; Changed(); return; }
             var id = NextId();
-            attachments.Add(new Attachment(id, name, data is not null ? "image" : "file", mimeType, data, path, thumb));
+            attachments.Add(new Attachment(id, name, data is not null ? "image" : "file", mimeType, data, path, thumb, text));
             if (data is not null) Remember(id, mimeType ?? "image/png", data);
         }
         Changed();
@@ -615,6 +768,7 @@ internal sealed partial class AgentHost
 
     public void Stop()
     {
+        DisconnectHost();
         IAgentHarness? old;
         lock (gate)
         {
@@ -709,8 +863,7 @@ internal sealed partial class AgentHost
     private void Remember(int id, string mimeType, string data)
     {
         pictures[id] = $"data:{mimeType};base64,{data}";
-        // ponytail: drops the oldest beyond a fixed count; a size budget would suit very large screenshots better.
-        foreach (var old in pictures.Keys.Order().Take(Math.Max(0, pictures.Count - MaxPictures)).ToArray()) pictures.Remove(old);
+        // Retain image references for paged history until this conversation is reset.
     }
 
     /// <summary>The data URL of an image shown in the conversation or attached to the next message.</summary>
@@ -722,14 +875,43 @@ internal sealed partial class AgentHost
 
     private string? OwnPicture(int id) { lock (gate) return pictures.GetValueOrDefault(id); }
 
+    /// <summary>
+    /// A local image an agent named in its reply, as a data URL. Only a small PNG, JPEG, GIF or WebP that is not a symbolic link and lies inside
+    /// the Loaded Repository or the temporary folder is read; a relative path means relative to the repository. Anything else is null.
+    /// </summary>
+    public string? PictureFromPath(string path)
+    {
+        string? root;
+        lock (gate) root = sessionCwd;
+        try
+        {
+            if (path.StartsWith("file://", StringComparison.OrdinalIgnoreCase)) path = new Uri(path).LocalPath;
+            var joined = Path.IsPathFullyQualified(path) ? path : root is null ? null : Path.Combine(root, path);
+            if (joined is null) return null;
+            var file = Path.GetFullPath(joined);
+            var mime = Path.GetExtension(file).ToLowerInvariant() switch { ".png" => "image/png", ".jpg" or ".jpeg" => "image/jpeg", ".gif" => "image/gif", ".webp" => "image/webp", _ => null };
+            var info = new FileInfo(file);
+            if (mime is null || !info.Exists || info.LinkTarget is not null || info.Length > 30_000_000) return null; // a 4096-pixel PNG capture fits; the conversation shows a thumbnail
+            var real = Path.Combine(AgentProcess.RealPath(Path.GetDirectoryName(file)!), info.Name);
+            bool Inside(string under) => Path.GetRelativePath(AgentProcess.RealPath(under), real) is var relative && !relative.StartsWith("..", StringComparison.Ordinal) && !Path.IsPathFullyQualified(relative);
+            // The repository, the temp folders (the user's and, off Windows, /tmp), and rhDock's own host-tools folder, where viewport captures land.
+            string[] allowed = [.. root is null ? [] : new[] { root }, Path.GetTempPath(), .. OperatingSystem.IsWindows() ? [] : new[] { "/tmp" },
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "rhDock", "host-tools")];
+            if (!allowed.Any(under => Directory.Exists(under) && Inside(under))) return null;
+            HostLog.Write($"agent image from path served to the panel: {info.Name} ({info.Length} bytes)");
+            return $"data:{mime};base64,{Convert.ToBase64String(File.ReadAllBytes(real))}";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or UriFormatException or ArgumentException or NotSupportedException) { HostLog.Write("agent image from path not read: " + ex.GetType().Name); return null; }
+    }
+
     // Callers hold the gate.
     private void ResetConversation()
     {
         foreach (var id in pictures.Keys.Where(id => attachments.All(a => a.Id != id)).ToArray()) pictures.Remove(id);
-        items.Clear();
+        items.Clear(); historyStart = 0; historyExpanded = false;
         checkpoints.Clear();
         rewound = null;
-        baseline = null;
+        baseline = null; worktree = null;
         changes = [];
         title = null;
         usage = null;
@@ -751,7 +933,7 @@ internal sealed partial class AgentHost
         var all = await agent.ListAsync(cwd);
         lock (gate)
         {
-            conversations = all.Take(MaxConversations).Select(c => new Conversation(c.Id, c.Title, c.Updated?.ToString("o"), c.Preview)).ToArray();
+            conversations = all.Where(c => c.Id == sessionId || !IsHidden(c.Id)).Take(MaxConversations).Select(c => new Conversation(c.Id, c.Title, c.Updated?.ToString("o"), c.Preview)).ToArray();
             if (conversations.FirstOrDefault(c => c.Id == sessionId)?.Title is { Length: > 0 } latest) title = latest;
         }
     }
@@ -770,7 +952,8 @@ internal sealed partial class AgentHost
                     RepositoryCheckpoint? from;
                     lock (gate) { if (!changesDirty) break; changesDirty = false; from = baseline; }
                     var list = from?.Compare() ?? [];
-                    lock (gate) if (baseline == from) changes = list;
+                    var tree = from is null ? null : GitWorktreeInfo.Read(from.Root);
+                    lock (gate) if (baseline == from) { changes = list; worktree = tree; }
                     Changed();
                 }
             }
@@ -817,19 +1000,33 @@ internal sealed partial class AgentHost
                 case Rewound back: rewound = back with { Text = AgentPrompt.Parse(back.Text).Text.Trim() }; break;
                 case TextDelta text: Append("assistant", text.Text); break;
                 case ReasoningDelta thought: Append("thought", thought.Text); break;
+                case MediaMessage media:
+                    // Images join the reply being written; text that follows is appended to the same reply, so they show after its text.
+                    var ids = media.Images.Select(image => { var id = NextId(); Remember(id, image.MimeType, image.Data); return id; }).ToArray();
+                    HostLog.Write($"agent image in reply: {string.Join(", ", media.Images.Select(i => $"{i.MimeType} {i.Data.Length * 3 / 4} bytes"))}");
+                    if (items.Count > 0 && items[^1].Kind == "assistant") items[^1].Images = [.. items[^1].Images, .. ids];
+                    else Add(new Item { Id = NextId(), Kind = "assistant", Images = ids });
+                    break;
                 case ToolCall call:
                     var item = items.FindLast(i => i.ToolCallId == call.CallId);
                     if (item is null) Add(item = new Item { Id = NextId(), Kind = "tool", ToolCallId = call.CallId });
                     if (call.Title is { Length: > 0 }) item.Title = call.Title;
                     if (call.Kind is not null) item.ToolKind = call.Kind;
                     if (call.Status is not null) item.Status = call.Status;
-                    if (call.Detail is not null) item.Detail = Trim(call.Detail, MaxDetail);
+                    if (call.Detail is not null) item.Detail = call.Detail;
                     if (call.Parent is not null) item.Parent = call.Parent;
                     if (call.Files is { Count: > 0 }) item.Files = [.. call.Files.Distinct()];
+                    // A repeated update carries the same images again; keep the ones already remembered.
+                    if (call.Images is { Count: > 0 } && item.Images.Length != call.Images.Count)
+                    {
+                        item.Images = call.Images.Select(image => { var id = NextId(); Remember(id, image.MimeType, image.Data); return id; }).ToArray();
+                        // Diagnostics: where each image came from and how big it is, never the data itself.
+                        HostLog.Write($"agent image from tool call {call.CallId}: {string.Join(", ", call.Images.Select(i => $"{i.MimeType} {i.Data.Length * 3 / 4} bytes"))}");
+                    }
                     refreshChanges = call.Status is "Completed" or "Failed" && baseline is not null;
                     if (call.Status is "Completed" or "Failed") SteerPending();
                     break;
-                case PlanProposed proposed: Add(new Item { Id = NextId(), Kind = "proposal", Text = Trim(proposed.Text, MaxText) }); break;
+                case PlanProposed proposed: Add(new Item { Id = NextId(), Kind = "proposal", Text = proposed.Text }); break;
                 case PlanUpdate plan:
                     this.plan = plan.Entries.Take(100).Select(p => (p.Status, Trim(p.Content, MaxDetail))).ToArray();
                     break;
@@ -854,6 +1051,10 @@ internal sealed partial class AgentHost
                     turn = spent.Tokens;
                     break;
                 case Renamed renamed: title = renamed.Title; break;
+                case ModeUnavailable unavailable:
+                    if (mode == unavailable.Mode) mode = "ask";
+                    Add(new Item { Id = NextId(), Kind = "notice", Text = unavailable.Reason + ". Back to Ask: it asks before edits and commands." });
+                    break;
                 case Notice notice:
                     // Provider retries repeat; keep the latest.
                     if (items.Count > 0 && items[^1] is { Kind: "notice" } last && last.Text.StartsWith("Retrying", StringComparison.Ordinal) && notice.Text.StartsWith("Retrying", StringComparison.Ordinal))
@@ -869,24 +1070,35 @@ internal sealed partial class AgentHost
 
     // State helpers; callers hold the gate.
 
+    public void LoadEarlier(int before)
+    {
+        lock (gate)
+        {
+            if (historyStart == 0 || historyStart >= items.Count || items[historyStart].Id != before) return;
+            historyExpanded = true;
+            historyStart = Math.Max(0, historyStart - HistoryPageSize);
+        }
+        Changed();
+    }
+
     private void Add(Item item)
     {
         items.Add(item);
-        if (items.Count > MaxItems) items.RemoveRange(0, items.Count - MaxItems);
+        if (!historyExpanded) historyStart = Math.Max(0, items.Count - HistoryPageSize);
     }
 
     private void Append(string kind, string text)
     {
-        if (items.Count > 0 && items[^1].Kind == kind) items[^1].Text = Trim(items[^1].Text + text, MaxText);
-        else if (text.Trim().Length > 0) Add(new Item { Id = NextId(), Kind = kind, Text = Trim(text, MaxText) });
+        if (items.Count > 0 && items[^1].Kind == kind) items[^1].Text = items[^1].Text + text;
+        else if (text.Trim().Length > 0) Add(new Item { Id = NextId(), Kind = kind, Text = text });
     }
 
     // A replayed user message: rhDock's context and attached files become chips again.
     private void Replay(UserMessage user)
     {
         var (text, context, files) = AgentPrompt.Parse(user.Text);
-        var item = new Item { Id = NextId(), Kind = "user", MessageId = user.MessageId, Text = Trim(text, MaxText),
-            Chips = [.. context.Select(c => c == "selection" ? "Rhino selection" : "Script context"), .. user.Files.Concat(files).Select(Path.GetFileName).OfType<string>().Distinct()] };
+        var item = new Item { Id = NextId(), Kind = "user", MessageId = user.MessageId, Text = text,
+            Chips = [.. context.Where(c => c is not ("host-tools" or "host-access")).Select(c => c == "selection" ? "Rhino selection" : c == "viewport" ? "Viewport" : "Script context"), .. user.Files.Concat(files).Select(Path.GetFileName).OfType<string>().Distinct()] };
         foreach (var image in user.Images) { var id = NextId(); Remember(id, image.MimeType, image.Data); item.Images = [.. item.Images, id]; }
         Add(item);
     }

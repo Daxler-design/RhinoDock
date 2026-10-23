@@ -8,9 +8,9 @@ RhinoDock is experimental software for Windows and macOS. See [known limitations
 
 ## What you get
 
-- **Scripts.** Plain C# classes with a `Run(...)` method, kept in your own Working Repo. Inputs come from the signature; geometry is picked in Rhino. Preview is transient, and Bake adds the result to the document with undo.
+- **Scripts.** Plain C# classes with a `Run(...)` method, kept in your own Working Repo. Inputs, enum dropdowns, and defaults come from the signature; geometry is picked in Rhino. Preview is transient, and Bake adds the result to the document with undo.
 - **Solvers.** A Script with a `Done` output runs frame by frame, with Solve, Pause, Step, and Reset.
-- **Agents.** Pick an installed coding agent (Claude Code, Codex, OpenCode, Pi, and more) in the Agent tab. It writes and edits your Scripts and Extensions while you watch the diffs.
+- **Agents.** Pick an installed coding agent (Claude Code, Codex, OpenCode, Pi, and more) in the Agent tab. It writes and edits your Scripts and Extensions while you watch the diffs. Connect rhDockConnect when you want it to inspect or operate the active Rhino document.
 - **Extensions.** Add your own windows and Rhino behavior in C# and web pages that hot-reload like Scripts. The core stays small; you grow it.
 - **Workspaces.** Inputs, picks, and display settings are saved per Script and restored when you reopen.
 
@@ -20,7 +20,7 @@ In Rhino, run `_PackageManager`, search for `rhdock`, and install it.
 
 ### Build from source
 
-You need the .NET 8 SDK and Node.js 22.
+Requires Rhino 8.31 or later using .NET 8. To build from source, install the .NET 8 SDK and Node.js 22.
 
 ```sh
 git clone https://github.com/Daxler-design/RhinoDock.git
@@ -39,6 +39,7 @@ Restart Rhino and run `RhinoDock`. Then follow [Getting started](docs/getting-st
 - [Agent tab](docs/agent.md)
 - [Extensions](docs/extensions.md) and [debugging](docs/debugging.md)
 - [Known limitations](docs/limitations.md) and the [changelog](CHANGELOG.md)
+- Maintainers: [publishing a Yak package](docs/publishing.md)
 - Contributors: [development](docs/development.md), [architecture](docs/architecture.md), [CONTRIBUTING](CONTRIBUTING.md), [security](SECURITY.md)
 
 ## Acknowledgments

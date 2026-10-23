@@ -8,6 +8,7 @@ internal static class SingleScriptSessionChecks
 {
     public static void Run()
     {
+        CheckEnum();
         CheckNewRepository();
         CheckPulse();
         CheckSolver();
@@ -186,6 +187,32 @@ internal static class SingleScriptSessionChecks
             SingleScriptWorkspaceStore.Append(folder, new(DateTime.UtcNow, otherScript, "manual", styled));
             Check(SingleScriptWorkspaceStore.LoadHistory(folder)!.Revisions[^1].Scripts[otherScript].PreviewStyles?["y"] == new PreviewStyle("#EC6F67", 3, null, 40),
                 "Preview Style round-trips in optional v3 settings");
+            var channels = new PreviewStyle(null, 0, null, 30)
+            {
+                Edges = new PreviewChannel("#123456", 75),
+                Fill = new PreviewChannel(null, 20)
+            };
+            styled[otherScript] = otherState with { PreviewStyles = new() { ["y"] = channels } };
+            SingleScriptWorkspaceStore.Append(folder, new(DateTime.UtcNow, otherScript, "manual", styled));
+            Check(SingleScriptWorkspaceStore.LoadHistory(folder)!.Revisions[^1].Scripts[otherScript].PreviewStyles?["y"] == channels,
+                "independent edges and automatic fill survive Workspace round-trip, including zero edge width");
+            Check(!(channels with { Fill = new PreviewChannel(null, 101) }).IsValid,
+                "invalid channel opacity is rejected");
+            intact = File.ReadAllText(savedPath);
+            var legacyPreview = styled[otherScript] with { PreviewOff = true };
+            Check(!legacyPreview.InputsPreviewVisible && !legacyPreview.OutputsPreviewVisible, "legacy global Preview off still hides both sections");
+            var explicitInput = legacyPreview with { InputPreviewOff = false };
+            Check(explicitInput.InputsPreviewVisible && !explicitInput.OutputsPreviewVisible, "explicit section state overrides only its legacy global fallback");
+            foreach (var inputOff in new[] { false, true })
+                foreach (var outputOff in new[] { false, true })
+                {
+                    var splitPreview = new Dictionary<string, SavedScriptState>(styled, StringComparer.Ordinal)
+                    { [otherScript] = styled[otherScript] with { InputPreviewOff = inputOff, OutputPreviewOff = outputOff } };
+                    SingleScriptWorkspaceStore.Append(folder, new(DateTime.UtcNow, otherScript, "manual", splitPreview));
+                    var restoredPreview = SingleScriptWorkspaceStore.LoadHistory(folder)!.Revisions.Last().Scripts[otherScript];
+                    Check(restoredPreview.InputsPreviewVisible == !inputOff && restoredPreview.OutputsPreviewVisible == !outputOff,
+                        "independent input/output Preview switches round-trip");
+                }
             intact = File.ReadAllText(savedPath);
             var badStyle = new Dictionary<string, SavedScriptState>(scripts, StringComparer.Ordinal)
             { [otherScript] = otherState with { PreviewStyles = new() { ["y"] = new PreviewStyle("red", 33, null, 140) } } };
@@ -391,6 +418,38 @@ internal static class SingleScriptSessionChecks
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static int Calls(ScriptCompilerService compiler, string folder) => (int)compiler.CompileProject(folder)
         .Assembly.GetType("Fixture.Sample", true)!.GetField("Calls")!.GetValue(null)!;
+
+    public static void CheckEnum()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "rhdock-enum-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(folder, "Components"));
+        try
+        {
+            File.WriteAllText(Path.Combine(folder, "Fixture.csproj"), "<Project />");
+            File.WriteAllText(Path.Combine(folder, "Components", "Choice.cs"), "namespace Fixture; public enum Mode { Cylinder, Tangent, Cone, Rails } public class Choice { public void Run(ref string result, Mode mode = Mode.Cylinder) { result = mode.ToString(); } }");
+            using var compiler = new ScriptCompilerService();
+            using var session = new SingleScriptSession(compiler);
+            session.Open(folder);
+            session.Select("Components/Choice.cs");
+            var port = session.Selected!.Ports.Single(p => p.Name == "mode");
+            Check(port.DefaultValue == "Cylinder" && port.EnumValues.Length == 4, "enum metadata exposes choices and default");
+            Check(session.Run().Status == "ok" && Equals(session.Outputs["result"], "Cylinder"), "unset enum uses Script default");
+            session.SetInput("mode", "rails");
+            Check(session.Inputs["mode"] is string name && name == "Rails", "enum input stores canonical string rather than a Script-owned object");
+            Check(session.Run().Status == "ok" && Equals(session.Outputs["result"], "Rails"), "named choice reaches compiled enum parameter");
+            foreach (object value in new object[] { "missing", 3 })
+            {
+                try { session.SetInput("mode", value); throw new Exception("Invalid enum was accepted"); }
+                catch (ArgumentException) { }
+            }
+            var saved = SavedScalar.Capture(session.Inputs["mode"])!;
+            session.SetInput("mode", saved.Restore());
+            Check(session.Run().Status == "ok", "enum string survives persistence");
+            session.SetInput("mode", null);
+            Check(session.Run().Status == "ok" && Equals(session.Outputs["result"], "Cylinder"), "clearing choice restores default");
+        }
+        finally { Directory.Delete(folder, true); }
+    }
 
     private static void Check(bool condition, string label)
     { if (!condition) throw new Exception("FAIL: " + label); Console.WriteLine("PASS: " + label); }

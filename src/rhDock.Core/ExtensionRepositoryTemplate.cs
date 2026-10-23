@@ -5,9 +5,9 @@ namespace rhDock.Core;
 /// <summary>Creates an Extension Repo, and Extensions inside it, from the templates packaged with rhDock.</summary>
 public static class ExtensionRepositoryTemplate
 {
-    public const string StarterName = "MyExtension";
+    public const string StarterName = "ViewportSliders";
     private static readonly string[] RepositoryFiles = [".gitignore", "AGENTS.md", "CLAUDE.md"];
-    private static readonly string[] ExtensionFiles = ["MyExtension.csproj", "MyExtension.cs", "index.html", "rhdock.js"];
+    private static readonly string[] ExtensionFiles = ["ViewportSliders.csproj", "ViewportSliders.cs", "README.md", "SampleScript.cs.txt"];
 
     /// <summary>Creates the repo files and the starter Extension in an empty or new folder.</summary>
     public static void CreateRepository(string destination)
@@ -25,7 +25,7 @@ public static class ExtensionRepositoryTemplate
     public static void CreateExtension(string repository, string name)
     {
         if (!SyntaxFacts.IsValidIdentifier(name) || SyntaxFacts.GetKeywordKind(name) != SyntaxKind.None)
-            throw new ArgumentException("An Extension name must be a C# identifier, such as SunStudy.", nameof(name));
+            throw new ArgumentException("An Extension name must be a C# identifier, such as CameraView.", nameof(name));
         var folder = Path.Combine(Path.GetFullPath(repository), name);
         if (Directory.Exists(folder)) throw new IOException($"The Extension Repo already has a folder named {name}.");
         Directory.CreateDirectory(folder);

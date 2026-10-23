@@ -40,6 +40,8 @@ public sealed partial class ClaudeCode(string executable, Action<string> log) : 
         public Choice Choice = new(null, null);
         public string? Mode;
         public string? ResumeAt, RewoundTo;
+        // A fork not yet prompted: its CLI resumes this parent with --fork-session under the fork's own id.
+        public string? ForkOf;
         public bool Stored;
         public double Cost;
         public string? Last;
@@ -109,15 +111,30 @@ public sealed partial class ClaudeCode(string executable, Action<string> log) : 
         current.Turn = done;
         current.Cancelled = false;
         try { await Mode(current, prompt.Mode); }
-        catch (InvalidOperationException ex) { log("set_permission_mode " + ex.Message); }
+        catch (InvalidOperationException ex)
+        {
+            log("set_permission_mode " + ex.Message);
+            // Auto needs an account, model, and policy that allow it; say so rather than quietly asking instead.
+            if (prompt.Mode == "auto") { conversation.Mode = "ask"; Event?.Invoke(new ModeUnavailable(sessionId, "auto", "Claude Code did not accept Auto mode (" + ex.Message + ")")); try { await Mode(current, "ask"); } catch (InvalidOperationException) { } }
+        }
         current.Prompted = true;
         conversation.Stored = true;
         // Claude Code compacts, runs commands, and loads skills from slash text.
         var text = prompt.Compact ? "/compact" : prompt.Command is { } command ? $"/{command} {prompt.Text}".Trim() : prompt.Skill is { } skill ? $"/{skill} {prompt.WithFiles()}".Trim() : prompt.WithFiles();
         await current.Lines.Send(UserMessage(text, prompt.Images));
         var result = await done.Task;
-        lock (gate) { conversation.ResumeAt = null; conversation.RewoundTo = null; }
+        lock (gate) { conversation.ResumeAt = null; conversation.RewoundTo = null; conversation.ForkOf = null; }
         return result;
+    }
+
+    // Claude Code forks when a CLI resumes the parent with --fork-session; the fork's file appears with its first prompt.
+    public Task<string?> ForkAsync(string repository, string sessionId)
+    {
+        Choice choice;
+        lock (gate) choice = conversations.TryGetValue(sessionId, out var parent) ? parent.Choice : next;
+        var id = Guid.NewGuid().ToString();
+        conversations[id] = new Conversation { Choice = choice, Stored = true, ForkOf = sessionId };
+        return Task.FromResult<string?>(id);
     }
 
     // Claude Code reads a message sent during a turn at its next step.
@@ -262,7 +279,8 @@ public sealed partial class ClaudeCode(string executable, Action<string> log) : 
             };
             if (choice.Model is { } model && model != "default") args.AddRange(["--model", model]);
             if (choice.Effort is { } effort) args.AddRange(["--effort", effort]);
-            if (stored) { args.AddRange(["--resume", sessionId]); if (conversation?.ResumeAt is { } at) args.AddRange(["--resume-session-at", at]); }
+            if (conversation?.ForkOf is { } parent) args.AddRange(["--resume", parent, "--fork-session", "--session-id", sessionId]);
+            else if (stored) { args.AddRange(["--resume", sessionId]); if (conversation?.ResumeAt is { } at) args.AddRange(["--resume-session-at", at]); }
             else args.AddRange(["--session-id", sessionId]);
             var process = AgentProcess.Launch(executable, args, AgentProcess.RealPath(repository), AgentProcess.ExtendedPath(), log);
             var lines = new JsonLines(process, log);
@@ -283,7 +301,7 @@ public sealed partial class ClaudeCode(string executable, Action<string> log) : 
         Control(current, new JsonObject { ["subtype"] = "set_permission_mode", ["mode"] = PermissionMode(mode) });
 
     // rhDock's modes are Claude Code's own; Allow all needs the CLI's opt-in flag, which a running CLI may lack, so it asks and rhDock approves.
-    private static string PermissionMode(string? mode) => mode switch { "edits" => "acceptEdits", "plan" => "plan", _ => "default" };
+    private static string PermissionMode(string? mode) => mode switch { "edits" => "acceptEdits", "plan" => "plan", "auto" => "auto", _ => "default" };
 
     private async Task<JsonElement> Control(Live current, JsonObject request)
     {

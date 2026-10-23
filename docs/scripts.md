@@ -26,7 +26,7 @@ public sealed class CircleScript
 
 Put this in the generated project's `Components/` directory. Pick a Rhino point object for `center`, then Run. Arrays and lists pass as whole values; write iteration explicitly in C#.
 
-Supported panel inputs include primitive scalars and lists, colors, Rhino geometry, `Point3d`, and `ComponentIndex`. A component index identifies a part, not its parent geometry; take a separate geometry input and validate the index when topology is needed. Geometry outputs support Preview/Bake. A string output named `Info` provides concise Console information.
+Supported panel inputs include primitive scalars and lists, scalar enums, colors, Rhino geometry, `Point3d`, and `ComponentIndex`. A component index identifies a part, not its parent geometry; take a separate geometry input and validate the index when topology is needed. Geometry outputs support Preview/Bake. A string output named `Info` provides concise Console information.
 
 ## Solver Scripts
 
@@ -41,3 +41,22 @@ RhinoDock uses Roslyn to compile repository C# files. It does not run MSBuild or
 External assemblies use `<Reference>` entries with `HintPath` in the project file; place distributable dependencies in `lib/`. Resolve dependencies before opening the repository and test native libraries on each supported operating system. The generated project documents how to override its Rhino assembly path for a normal `dotnet build`.
 
 Saving source triggers reload, preserves compatible inputs, and clears stale results. Read compiler messages in the Console and validate with a fresh Run. Scripts run with Rhino's process permissions; file and document side effects are the Script author's responsibility.
+
+## Named choices and defaults
+
+Declare an enum for a finite set of modes. Names appear in the panel dropdown, and clearing the input restores the declared default. A plain integer default describes one value, not a list of allowed choices.
+
+```csharp
+public enum Mode { Cylinder, Rails, Freeform }
+
+public void Run(ref string Info, Mode mode = Mode.Cylinder)
+{
+    Info = mode.ToString();
+}
+```
+
+The host persists enum inputs as names rather than retaining Script-owned enum instances. Existing numeric or string mode inputs continue to work.
+
+## Analysis colors
+
+Return a Mesh with one VertexColors entry per vertex to supply analysis colors. Default Preview fill uses those colors; users can override fill and edges independently. Preview edits operate on host-owned copies and do not modify the returned mesh.

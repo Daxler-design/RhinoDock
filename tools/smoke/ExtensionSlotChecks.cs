@@ -81,11 +81,11 @@ internal static class ExtensionSlotChecks
         try
         {
             ExtensionRepositoryTemplate.CreateRepository(repo);
-            Check(new[] { ".gitignore", "AGENTS.md", "CLAUDE.md", "MyExtension/MyExtension.csproj", "MyExtension/MyExtension.cs", "MyExtension/index.html", "MyExtension/rhdock.js" }
-                .All(file => File.Exists(Path.Combine(repo, file))), "new Extension Repo has guidance and the starter Extension");
+            Check(new[] { ".gitignore", "AGENTS.md", "CLAUDE.md", "ViewportSliders/ViewportSliders.csproj", "ViewportSliders/ViewportSliders.cs", "ViewportSliders/README.md", "ViewportSliders/SampleScript.cs.txt" }
+                .All(file => File.Exists(Path.Combine(repo, file))), "new Extension Repo has guidance, ViewportSliders, and its companion Script source");
             ExtensionRepositoryTemplate.CreateExtension(repo, "SunStudy");
             var source = File.ReadAllText(Path.Combine(repo, "SunStudy", "SunStudy.cs"));
-            Check(File.Exists(Path.Combine(repo, "SunStudy", "SunStudy.csproj")) && source.Contains("class SunStudy") && !source.Contains("MyExtension"),
+            Check(File.Exists(Path.Combine(repo, "SunStudy", "SunStudy.csproj")) && source.Contains("class SunStudy") && !source.Contains("ViewportSliders"),
                 "new Extension renames the starter class and project");
             Check(Throws(() => ExtensionRepositoryTemplate.CreateExtension(repo, "SunStudy")) && Throws(() => ExtensionRepositoryTemplate.CreateExtension(repo, "Sun Study"))
                 && Throws(() => ExtensionRepositoryTemplate.CreateExtension(repo, "class")) && Throws(() => ExtensionRepositoryTemplate.CreateRepository(repo)),

@@ -26,6 +26,28 @@ static class AgentHostChecks
         {
             host.Connect(repo);
             await Ready();
+            // A local image the agent names is read only if it is a small raster, not a link, inside the repository or the temp folder.
+            File.WriteAllBytes(Path.Combine(repo, "shot.png"), [137, 80, 78, 71]);
+            File.WriteAllText(Path.Combine(repo, "note.txt"), "x");
+            var outside = Path.Combine(AppContext.BaseDirectory, "rhdock-outside.png");
+            File.WriteAllBytes(outside, [137, 80, 78, 71]);
+            try
+            {
+                if (host.PictureFromPath("shot.png") is not { } relativePicture || !relativePicture.StartsWith("data:image/png;base64,")) throw new Exception("A repository image must load, by relative or absolute path.");
+                if (host.PictureFromPath(Path.Combine(repo, "shot.png")) is null) throw new Exception("An absolute repository image path must load.");
+                if (host.PictureFromPath("note.txt") is not null) throw new Exception("A non-image file must not be read.");
+                if (host.PictureFromPath(outside) is not null || host.PictureFromPath("../../../../../etc/hosts.png") is not null) throw new Exception("An image outside the repository and temp folder must not be read.");
+                if (!OperatingSystem.IsWindows())
+                {
+                    File.CreateSymbolicLink(Path.Combine(repo, "link.png"), outside);
+                    if (host.PictureFromPath("link.png") is not null) throw new Exception("A symbolic link must not be followed.");
+                    var inTmp = Path.Combine("/tmp", "rhdock-smoke-" + Guid.NewGuid().ToString("N") + ".png");
+                    File.Copy(Path.Combine(repo, "shot.png"), inTmp);
+                    try { if (host.PictureFromPath(inTmp) is null) throw new Exception("An image under /tmp (a symlink to /private/tmp on macOS) must load."); }
+                    finally { File.Delete(inTmp); }
+                }
+            }
+            finally { File.Delete(outside); }
             host.SetMode("edits");
             host.Prompt(repo, "edit", [], [], []);
             await Ready();
@@ -112,6 +134,25 @@ static class AgentHostChecks
             if (State().GetProperty("permission").ValueKind != JsonValueKind.Null)
                 throw new Exception("An exited agent must discard queued requests; a stale panel answer cannot reopen one.");
             Console.WriteLine("PASS: agent exit discards pending requests.");
+            for (var i = 0; i < 350; i++) agent.Emit(new UserMessage("fake", "history-" + i, "History " + i, [], []));
+            var recent = State();
+            if (recent.GetProperty("items").GetArrayLength() != 100 || !recent.GetProperty("history").GetProperty("hasMore").GetBoolean())
+                throw new Exception("History must initially publish one page without discarding older rows.");
+            var before = recent.GetProperty("history").GetProperty("before").GetInt32();
+            host.LoadEarlier(before);
+            host.LoadEarlier(before);
+            if (State().GetProperty("items").GetArrayLength() != 200) throw new Exception("Duplicate history cursor loaded a page twice.");
+            while (State().GetProperty("history").GetProperty("hasMore").GetBoolean())
+                host.LoadEarlier(State().GetProperty("history").GetProperty("before").GetInt32());
+            var full = State();
+            if (!full.GetProperty("items").EnumerateArray().Any(i => i.GetProperty("text").GetString() == "History 0"))
+                throw new Exception("The oldest message was lost.");
+            var firstId = full.GetProperty("items")[0].GetProperty("id").GetInt32();
+            agent.Emit(new UserMessage("fake", "long-history", new string('x', 18000), [], []));
+            var appended = State().GetProperty("items");
+            if (appended[0].GetProperty("id").GetInt32() != firstId || appended[appended.GetArrayLength() - 1].GetProperty("text").GetString()!.Length != 18000)
+                throw new Exception("New output dropped the history anchor or truncated text.");
+            Console.WriteLine("PASS: history paging, stale cursor rejection, oldest message recovery and untrimmed text.");
             await Switching(repo, file);
             await Naming(repo, file);
         }
@@ -257,6 +298,16 @@ static class AgentHostChecks
             await Until(() => running.Steered.Contains("steer me"));
             if (running.Steered.Contains("remove me")) throw new Exception("Removed pending steer must never reach the harness.");
             first.Prompt(repo, "next turn", [], [], []);
+            // Editing a queued message gives back its attachments and the page's draft, and takes it out of the queue.
+            first.Attach("shot.png", "image/png", "iVBORw0KGgo=", null, null);
+            first.Prompt(repo, "with an image", [], [], [], draft: "{\"text\":\"with an image\"}");
+            var withImage = State(first).GetProperty("queued").EnumerateArray().Last();
+            if (withImage.GetProperty("draft").GetString() != "{\"text\":\"with an image\"}" || State(first).GetProperty("attachments").GetArrayLength() != 0)
+                throw new Exception("A queued message must keep the page's draft and take the composer's attachments.");
+            if (!first.EditQueued(withImage.GetProperty("id").GetInt32()) || State(first).GetProperty("attachments").GetArrayLength() != 1
+                || State(first).GetProperty("queued").EnumerateArray().Any(q => q.GetProperty("text").GetString() == "with an image"))
+                throw new Exception("Editing a queued message must return its attachments to the composer and remove it from the queue.");
+            first.Detach(State(first).GetProperty("attachments")[0].GetProperty("id").GetInt32());
             first.NewConversation(repo);
             var second = AgentHost.Current;
             if (second == first || running.Disposed) throw new Exception("New must leave the existing turn running in its own conversation.");
@@ -297,18 +348,36 @@ static class AgentHostChecks
             if (AgentHost.Current != first || !State(first).GetProperty("items").EnumerateArray().Any(i => i.GetProperty("text").GetString() == "Background text"))
                 throw new Exception("Switching back must restore the original transcript without replaying it.");
             Console.WriteLine("PASS: pending steer/removal, background queues, concurrent sessions, questions, harness status, and transcript isolation.");
+            // Side chats: Back keeps one in the conversation's tray (never in the conversation list); the tray opens it again or closes it.
+            first.Side(repo, "the quote", "");
+            var side = AgentHost.Current;
+            await Until(() => State(side).GetProperty("status").GetString() == "ready");
+            side.BackFromSide(repo);
+            var tray = State(first).GetProperty("sideChats");
+            if (AgentHost.Current != first || tray.GetArrayLength() != 1 || tray[0].GetProperty("viewId").GetString() != side.ViewId || tray[0].GetProperty("title").GetString() != "the quote")
+                throw new Exception("Back to main must show the main conversation and keep the side chat in its tray: " + tray.GetRawText());
+            if (State(first).GetProperty("conversations").EnumerateArray().Any(c => c.GetProperty("id").GetString() == "local:" + side.ViewId))
+                throw new Exception("A side chat must not appear in the conversation list.");
+            first.OpenSide(side.ViewId);
+            if (AgentHost.Current != side) throw new Exception("Opening a side chat from the tray must show it.");
+            side.BackFromSide(repo);
+            first.CloseSide(repo, side.ViewId);
+            if (AgentHost.Current != first || State(first).GetProperty("sideChats").GetArrayLength() != 0)
+                throw new Exception("Closing a side chat from the tray must remove it and keep the main conversation shown.");
+            Console.WriteLine("PASS: side chats stay in the main conversation's tray after Back, reopen from it, and close from it.");
         }
         finally { AgentHost.Shutdown(); }
         if (agents.Any(a => !a.Disposed)) throw new Exception("Shutdown must dispose every open conversation's harness.");
         Console.WriteLine("PASS: shutdown stops every retained harness.");
     }
 
-    private sealed class Fake(string file, string id = "fake") : IAgentHarness
+    internal sealed class Fake(string file, string id = "fake") : IAgentHarness
     {
         public event Action<AgentEvent>? Event;
         public readonly System.Collections.Concurrent.ConcurrentBag<string> Allowed = [];
         private bool rewound;
         public string? Mode;
+        public AgentPrompt? LastPrompt;
         public string Model = "small";
         public bool NativeRestore = true;
         public bool Holding, Disposed;
@@ -326,6 +395,7 @@ static class AgentHostChecks
         public Task SetOptionAsync(string repository, string? sessionId, string optionId, string value) { if (optionId == "model") Model = value; return Task.CompletedTask; }
         public Task<TurnResult> PromptAsync(string repository, string sessionId, AgentPrompt prompt)
         {
+            LastPrompt = prompt;
             Mode = prompt.Mode;
             Prompts.Add(prompt.Text);
             Emit(new PromptAccepted(sessionId, "prompt"));
@@ -376,7 +446,7 @@ namespace rhDock.Rhino
         public string GetString(string name, string fallback) => values.GetValueOrDefault(name, fallback);
         public void SetString(string name, string value) => values[name] = value;
     }
-    sealed class SingleScriptHost
+    sealed partial class SingleScriptHost
     {
         public static SingleScriptHost Current { get; } = new();
         public void RefreshPanel() { }

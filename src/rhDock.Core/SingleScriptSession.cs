@@ -68,6 +68,11 @@ public sealed class SingleScriptSession : IDisposable
         ObjectDisposedException.ThrowIf(disposed, this);
         var port = Selected?.Ports.FirstOrDefault(p => p.Name == name && !p.IsOutput)
             ?? throw new ArgumentException("Input not found: " + name, nameof(name));
+        if (value is not null && port.EnumValues.Length > 0)
+            value = value is string choice
+                ? port.EnumValues.FirstOrDefault(option => option.Equals(choice, StringComparison.OrdinalIgnoreCase))
+                    ?? throw new ArgumentException("Unknown choice for " + name + ": " + choice)
+                : throw new ArgumentException("Enum inputs require a named choice.", nameof(value));
         if (value is null) inputs.Remove(port.Name);
         else inputs[port.Name] = value;
         EndSolve();

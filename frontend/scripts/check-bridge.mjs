@@ -14,8 +14,8 @@ function panel() {
   let nextId = 0;
   const window = { setInterval: callback => { timers.set(++nextId, callback); return nextId; }, clearInterval: id => timers.delete(id) };
   const exports = {};
-  vm.runInNewContext(code, { window, exports });
-  return { window, timers, messages, connect: exports.connect, tick: () => [...timers.values()].forEach(callback => callback()) };
+  vm.runInNewContext(code + ";exports.applyMock = applyMock;", { window, exports });
+  return { window, timers, messages, connect: exports.connect, applyMock: exports.applyMock, tick: () => [...timers.values()].forEach(callback => callback()) };
 }
 
 const first = panel(), second = panel();
@@ -26,7 +26,7 @@ first.tick(); // React mounted before Eto injected its bridge.
 assert.equal(first.messages.length, 0);
 first.window.eto = { postMessage: message => first.messages.push(JSON.parse(message)) };
 first.tick(); first.tick(); // Readiness retries until acknowledged, including a lost initial reply.
-assert.deepEqual(first.messages, [{ action: 'ready' }, { action: 'ready' }]);
+assert.deepEqual(first.messages, [{ action: 'ready', viewport: {} }, { action: 'ready', viewport: {} }]);
 assert.equal(second.messages.length, 0);
 first.window.rhDockSnapshot({ revision: 1 });
 assert.equal(received.length, 1);
@@ -34,8 +34,15 @@ assert.equal(first.timers.size, 0);
 assert.equal(second.timers.size, 1); // Each panel owns its handshake.
 second.window.eto = { postMessage: message => second.messages.push(JSON.parse(message)) };
 second.tick();
-assert.deepEqual(second.messages, [{ action: 'ready' }]);
+assert.deepEqual(second.messages, [{ action: 'ready', viewport: {} }]);
 closeFirst(); closeSecond();
 assert.equal(second.timers.size, 0);
 assert.equal(second.window.rhDockSnapshot, undefined);
 console.log('Native bridge delayed readiness, acknowledgment, per-panel isolation, and cleanup passed');
+
+const empty = { groups: [], ungrouped: [] };
+const layoutState = { inputs: [], outputs: [], layout: { rev: 4, inputs: empty, outputs: empty } };
+const layoutAction = { action: 'layout', layoutRevision: 3, inputs: empty, outputs: empty };
+assert.equal(first.applyMock(layoutState, layoutAction), layoutState, 'A stale page must keep the newer saved layout');
+assert.equal(first.applyMock(layoutState, { ...layoutAction, layoutRevision: 4 }).layout.rev, 5);
+console.log('Layout actions preserve optimistic revision checks in the browser sample');

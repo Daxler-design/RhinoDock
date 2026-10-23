@@ -94,6 +94,20 @@ public sealed partial class Codex(string executable, Action<string> log) : IAgen
         return id;
     }
 
+    // An ephemeral fork: Codex keeps it in memory only, so it never joins thread/list and needs no cleanup.
+    public async Task<string?> ForkAsync(string repository, string sessionId)
+    {
+        var parameters = Policy("ask", forThread: true);
+        parameters["threadId"] = sessionId;
+        parameters["cwd"] = AgentProcess.RealPath(repository);
+        parameters["ephemeral"] = true;
+        parameters["excludeTurns"] = true;
+        var result = await Rpc.Request("thread/fork", parameters);
+        var id = Str(Obj(result, "thread"), "id")!;
+        threads[id] = new Conversation { Choice = new(Str(result, "model"), Str(result, "reasoningEffort")) };
+        return id;
+    }
+
     public async Task LoadAsync(string repository, string sessionId)
     {
         var thread = threads.GetOrAdd(sessionId, _ => new Conversation());
@@ -127,7 +141,7 @@ public sealed partial class Codex(string executable, Action<string> log) : IAgen
         if (prompt.Compact) await Rpc.Request("thread/compact/start", new JsonObject { ["threadId"] = sessionId });
         else
         {
-            var parameters = Policy(prompt.Mode, forThread: false);
+            var parameters = Policy(prompt.Mode, forThread: false, network: prompt.Context.Any(c => c.Name == "host-tools"));
             parameters["threadId"] = sessionId;
             parameters["input"] = Input(prompt, repository);
             Choice choice;
@@ -139,7 +153,14 @@ public sealed partial class Codex(string executable, Action<string> log) : IAgen
                 ["mode"] = prompt.Mode == "plan" ? "plan" : "default",
                 ["settings"] = new JsonObject { ["model"] = choice.Model, ["reasoning_effort"] = choice.Effort, ["developer_instructions"] = null },
             };
-            var started = await Rpc.Request("turn/start", parameters);
+            JsonElement started;
+            try { started = await Rpc.Request("turn/start", parameters); }
+            catch (Exception ex) when (prompt.Mode == "auto" && ex.Message.Contains("review", StringComparison.OrdinalIgnoreCase))
+            {
+                // ponytail: recognised by the word "review" in the refusal; the exact error for a policy-restricted reviewer is not documented.
+                Event?.Invoke(new ModeUnavailable(sessionId, "auto", "Codex refused automatic review (" + ex.Message + ")"));
+                throw;
+            }
             thread.Turn = Str(Obj(started, "turn"), "id");
         }
         return await done.Task;
@@ -253,18 +274,26 @@ public sealed partial class Codex(string executable, Action<string> log) : IAgen
     private JsonRpc Rpc => rpc ?? throw new InvalidOperationException("Codex is not running.");
 
     // rhDock's modes as Codex approval and sandbox policies (MonoCode's runtimeModeToCodexConfig). Ask runs read-only, so every edit asks.
-    private static JsonObject Policy(string mode, bool forThread)
+    // network: rhDockConnect is on for this prompt, so sandboxed commands may reach rhDock's localhost endpoint (the rhdock CLI).
+    // Codex has no localhost-only setting; network opens while the user keeps the connection on.
+    private static JsonObject Policy(string mode, bool forThread, bool network = false)
     {
         var (approval, sandbox, policy) = mode switch
         {
             "edits" => ("on-request", "workspace-write", "workspaceWrite"),
             "all" => ("on-request", "danger-full-access", "dangerFullAccess"),
+            // Auto-review keeps the workspace sandbox and sends only actions that need approval to a reviewer instead of the user.
+            "auto" => ("on-request", "workspace-write", "workspaceWrite"),
             "plan" => ("never", "read-only", "readOnly"),
             _ => ("untrusted", "read-only", "readOnly"),
         };
-        var result = new JsonObject { ["approvalPolicy"] = approval, ["approvalsReviewer"] = "user" };
+        var result = new JsonObject { ["approvalPolicy"] = approval, ["approvalsReviewer"] = mode == "auto" ? "auto_review" : "user" };
         if (forThread) result["sandbox"] = sandbox;
-        else result["sandboxPolicy"] = new JsonObject { ["type"] = policy };
+        else
+        {
+            result["sandboxPolicy"] = new JsonObject { ["type"] = policy };
+            if (network && policy != "dangerFullAccess") result["sandboxPolicy"]!["networkAccess"] = true;
+        }
         return result;
     }
 
