@@ -15,7 +15,7 @@ namespace rhDock.Agents;
 /// </summary>
 internal sealed class JsonLines : IDisposable
 {
-    private readonly Process process;
+    private readonly AgentChild process;
     private readonly Action<string> log;
     private readonly SemaphoreSlim writing = new(1, 1);
     private volatile bool disposed;
@@ -25,7 +25,7 @@ internal sealed class JsonLines : IDisposable
     /// <summary>Raised once when stdout closes, which is when the process has ended or is ending.</summary>
     public event Action? Exited;
 
-    public JsonLines(Process process, Action<string> log)
+    public JsonLines(AgentChild process, Action<string> log)
     {
         this.process = process;
         this.log = log;

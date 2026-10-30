@@ -209,7 +209,7 @@ internal sealed partial class SingleScriptHost : IReloadable, IDisposable
 
     public void Open(string folder)
     {
-        AgentHost.RevokeHostConnections();
+        HostTools.TargetChanged();
         try
         {
             SaveNow();

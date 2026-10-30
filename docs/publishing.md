@@ -28,11 +28,11 @@ if ($LASTEXITCODE -ne 0) { throw 'Release build failed.' }
 dotnet msbuild tools/package-yak.proj /t:Build
 if ($LASTEXITCODE -ne 0) { throw 'Yak build failed.' }
 
-$package = (Resolve-Path '.artifacts\yak\rhdock-0.6.10-rh8_31-any.yak').Path
+$package = (Resolve-Path '.artifacts\yak\rhdock-0.6.11-rh8_31-any.yak').Path
 Get-FileHash -Algorithm SHA256 $package
 ```
 
-The package includes the freshly built frontend, plugin, CLI, and license notices. The manifest uses version 0.6.10 and requires Rhino 8.31 or later. Quit all Rhino instances before replacing an installed copy for a local check.
+The package includes the freshly built frontend, plugin, CLI, and license notices. The manifest uses version 0.6.11 and requires Rhino 8.31 or later. Quit all Rhino instances before replacing an installed copy for a local check.
 
 ## Login and upload
 
@@ -52,7 +52,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Yak upload failed.' }
 if ($LASTEXITCODE -ne 0) { throw 'Yak lookup failed.' }
 ```
 
-Login opens Rhino Accounts in the browser. Use the account that owns `rhdock`. A successful push may print no output; the final search should include 0.6.10. Publishing a source snapshot does not automatically create a GitHub Release or upload to Yak.
+Login opens Rhino Accounts in the browser. Use the account that owns `rhdock`. A successful push may print no output; the final search should include 0.6.11. Publishing a source snapshot does not automatically create a GitHub Release or upload to Yak.
 
 Yak package versions/distributions cannot be overwritten. If this version is already published, stop and choose a new version in both the project and manifest before rebuilding; do not yank it as a way to replace it.
 

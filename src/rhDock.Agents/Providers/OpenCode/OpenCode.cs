@@ -30,7 +30,7 @@ public sealed partial class OpenCode(string executable, Action<string> log, IRea
     private readonly ConcurrentDictionary<string, TaskCompletionSource<TurnResult>> turns = new();
     private readonly ConcurrentDictionary<string, Live> live = new();
     private readonly ConcurrentDictionary<string, Tool> tools = new();
-    private Process? process;
+    private AgentChild? process;
     private HttpClient? http;
     private AgentInfo? info;
     private string? streamRepository;
@@ -72,22 +72,25 @@ public sealed partial class OpenCode(string executable, Action<string> log, IRea
         var env = new Dictionary<string, string>(environment ?? new Dictionary<string, string>()) { ["OPENCODE_SERVER_PASSWORD"] = password };
         var listening = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         var started = AgentProcess.Launch(exe, ["serve", "--hostname", "127.0.0.1", "--port", FreePort().ToString()], repository, path, log, env);
-        started.OutputDataReceived += (_, e) =>
+        void OnOutput(string line)
         {
-            if (e.Data is not { } line) return;
             log("stdout " + (line.Contains("password", StringComparison.OrdinalIgnoreCase) ? "[password]" : line));
             var at = line.IndexOf("http://", StringComparison.Ordinal);
             if (line.Contains("listening", StringComparison.OrdinalIgnoreCase) && at >= 0) listening.TrySetResult(line[at..].Trim());
-        };
-        started.EnableRaisingEvents = true;
-        started.Exited += (_, _) =>
+        }
+        started.Process.EnableRaisingEvents = true;
+        started.Process.Exited += (_, _) =>
         {
             listening.TrySetException(new InvalidOperationException("OpenCode stopped while starting."));
             if (process != started) return;
             Fail("OpenCode stopped.");
             Event?.Invoke(new Exited("OpenCode stopped."));
         };
-        started.BeginOutputReadLine();
+        _ = Task.Run(async () =>
+        {
+            try { while (await started.StandardOutput.ReadLineAsync().ConfigureAwait(false) is { } line) OnOutput(line); }
+            catch (Exception ex) when (ex is IOException or ObjectDisposedException) { }
+        });
         process = started;
         var url = await listening.Task.WaitAsync(TimeSpan.FromSeconds(60));
         http = new HttpClient { BaseAddress = new Uri(url.TrimEnd('/') + "/"), Timeout = Timeout.InfiniteTimeSpan };
@@ -314,7 +317,7 @@ public sealed partial class OpenCode(string executable, Action<string> log, IRea
 
     private void Stop()
     {
-        Process? old;
+        AgentChild? old;
         lock (gate) { old = process; process = null; stream?.Cancel(); stream = null; streamRepository = null; info = null; }
         http?.Dispose();
         http = null;

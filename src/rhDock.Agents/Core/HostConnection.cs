@@ -12,9 +12,15 @@ using System.Threading.Tasks;
 
 namespace rhDock.Agents;
 
-public sealed record HostRequest(string Method, string? Name = null, JsonElement Arguments = default, string? Id = null);
+public sealed record HostRequest(string Method, string? Name = null, JsonElement Arguments = default, string? Id = null, string? Target = null, string? Source = null)
+{
+    public void CheckTarget(string current)
+    {
+        if (Target != current) throw new InvalidOperationException("The Rhino document or repository changed. Read fresh state before requesting another operation.");
+    }
+}
 
-/// <summary>A revocable, per-chat loopback capability. No credential enters the repository or model prompt.</summary>
+/// <summary>A revocable loopback capability. No credential enters the repository or model prompt.</summary>
 public sealed class HostConnection : IDisposable
 {
     private readonly HttpListener listener = new();
@@ -23,7 +29,8 @@ public sealed class HostConnection : IDisposable
     private readonly Func<HostRequest, CancellationToken, Task<string>> dispatch;
     private readonly string token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
     private int disposed;
-    private string OutcomesPath => FilePath + ".outcomes";
+    private readonly string outcomeId = Guid.NewGuid().ToString("N");
+    private string OutcomesPath => FilePath + ".outcomes-" + outcomeId;
     private sealed record Outcome(string Fingerprint, string? Result = null, string? Error = null, bool Complete = false);
     private const int MaxRequestBytes = 4 * 1024 * 1024;
     public static JsonSerializerOptions Json { get; } = new(JsonSerializerDefaults.Web);
@@ -32,7 +39,7 @@ public sealed class HostConnection : IDisposable
     public bool Connected => Volatile.Read(ref disposed) == 0;
     public CancellationToken Cancellation => stopped.Token;
 
-    public HostConnection(string directory, Func<HostRequest, CancellationToken, Task<string>> dispatch)
+    public HostConnection(string directory, Func<HostRequest, CancellationToken, Task<string>> dispatch, bool publishInstance = false)
     {
         this.dispatch = dispatch;
         Directory.CreateDirectory(directory);
@@ -50,12 +57,14 @@ public sealed class HostConnection : IDisposable
             try { listener.Start(); break; }
             catch (HttpListenerException) when (attempt < 4) { }
         }
-        FilePath = Path.Combine(directory, Guid.NewGuid().ToString("N") + ".json");
+        FilePath = Path.Combine(directory, publishInstance ? $"pid-{Environment.ProcessId}.json" : Guid.NewGuid().ToString("N") + ".json");
         try
         {
-            var options = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write };
+            var options = new FileStreamOptions { Mode = publishInstance ? FileMode.Create : FileMode.CreateNew, Access = FileAccess.Write };
             if (!OperatingSystem.IsWindows()) options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
-            using (var file = new FileStream(FilePath, options)) JsonSerializer.Serialize(file, new { endpoint = Endpoint, token }, Json);
+            using var process = System.Diagnostics.Process.GetCurrentProcess();
+            using (var file = new FileStream(FilePath, options)) JsonSerializer.Serialize(file,
+                new { endpoint = Endpoint, token, pid = process.Id, started = process.StartTime.ToUniversalTime().Ticks }, Json);
             _ = Listen();
         }
         catch { listener.Close(); throw; }

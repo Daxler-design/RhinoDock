@@ -227,7 +227,7 @@ public sealed class SingleScriptPanel : Panel, global::Rhino.UI.IPanel
                         if (dialog.ShowDialog(this) == DialogResult.Ok) host.ExportWorkspace(dialog.FileName);
                     break;
                 case "agentSelect": if (host.Session.Repository is { } switchIn) AgentHost.Current.SelectAgent(switchIn, root.GetProperty("value").GetString() ?? ""); refresh = false; break;
-                case "agentHostConnect": if (host.Session.Repository is { } hostRepo) AgentHost.Current.ToggleHostConnection(hostRepo); refresh = false; break;
+                case "agentHostConnect": AgentHost.Current.ToggleHostConnection(); refresh = false; break;
                 case "agentConnect": if (host.Session.Repository is { } connectTo) AgentHost.Current.Connect(connectTo); refresh = false; break;
                 case "agentPrompt":
                     if (host.Session.Repository is { } promptIn)

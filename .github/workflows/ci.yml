@@ -53,6 +53,8 @@ jobs:
         run: dotnet run --project tools/smoke/smoke.csproj --configuration Release --no-build -- --agents-offline
       - name: Host tool boundary and CLI catalog checks
         run: dotnet run --project tools/smoke/smoke.csproj --configuration Release --no-build -- --host-tools src/rhDock.Cli/bin/Release/net8.0/rhdock.dll src/rhDock.Rhino/bin/Release/net8.0/rhDock.Rhino.rhp
+      - name: Windows agent handle isolation
+        run: dotnet run --project tools/smoke/smoke.csproj --configuration Release --no-build -- --windows-handles
       - name: Agent host checks
         run: dotnet run --project tools/smoke/smoke.csproj --configuration Release --no-build -- --agent-host
       - name: UI bridge checks

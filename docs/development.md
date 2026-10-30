@@ -94,3 +94,7 @@ Keep native acceptance separate: panel focus versus Rhino Undo/Redo; independent
 ## Source snapshots
 
 `snapshot.json` records the source revision, selected source/build file hashes, and public-specific adaptations. Public guides, workflows, manifest URL, and licensing files are maintained in this repository. Source snapshots append to this repository's history rather than importing a separate development history.
+
+## Windows subprocess handles
+
+Run `dotnet run --project tools/smoke/smoke.csproj -c Release --no-build -- --windows-handles` on Windows. It creates disposable inheritable file handles and verifies that agent shim/native launches do not retain them after parent release; redirected pipes, environment, working directory, short-lived exits and failure cleanup are covered. It skips on other platforms. Live model save/overwrite/Save As checks still require Rhino.

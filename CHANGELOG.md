@@ -2,6 +2,29 @@
 
 User-visible changes. Newest first.
 
+## 0.6.11 - 2026-10-30
+
+### Added
+
+- Share one explicitly enabled rhDockConnect service across chats, harnesses and external CLI clients in the same Rhino instance.
+- Discover enabled instances with `rhdock instances`; select one with `--pid`, inspect `status`, and pin a document/repository target with `--target`.
+- Use a stable user-level CLI launcher and optional standalone [Rhino access instructions](docs/RHDOCK.md).
+
+### Changed
+
+- rhDockConnect stays enabled across chat/harness disposal and document/repository changes. Disable it from any chat to revoke all clients, or exit Rhino. It starts disabled after restart.
+- The connection switch enables both reads and writes independently of harness permission modes. A harness's Plan mode is not enforced by the bridge against direct write requests. Authentication, stale-target checks, serialized calls and retry deduplication remain.
+
+### Fixed
+
+- Restrict Windows agent subprocesses to inheriting their three redirected pipe handles, preventing unrelated Rhino model handles from remaining open in agent processes after Save As. This covers the shared agent launcher and Git metadata queries; arbitrary Script/Extension subprocesses remain outside this fix.
+- Preserve conversation tool/image cards through optional source labels while sharing the instance service.
+
+### Verification
+
+- Release/frontend builds and transport, CLI, harness and Windows handle-isolation checks passed. The maintainer reported the installed build working in their Windows workflow. This does not certify every native platform or save scenario.
+- Requires Rhino 8.31 or later. Existing Working and Extension repositories do not need migration.
+
 ## 0.6.10 - 2026-10-23
 
 ### Added

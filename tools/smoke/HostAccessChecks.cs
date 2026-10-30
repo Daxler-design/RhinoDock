@@ -42,7 +42,8 @@ internal static class HostAccessChecks
             var arguments = JsonSerializer.SerializeToElement(new { value = 3 });
             using var connection = new HostConnection(folder, async (request, ct) =>
             {
-                if (request.Method == "call") Interlocked.Increment(ref executions);
+                if (request.Method == "status") return "{\"target\":\"fixture\"}";
+                if (request.Method == "call") { request.CheckTarget("fixture"); Interlocked.Increment(ref executions); }
                 await Task.Delay(25, ct);
                 if (request.Name == "fails") throw new InvalidOperationException("Fixture failure");
                 if (request.Name == "image") return "{\"content\":[{\"type\":\"image\",\"mimeType\":\"image/png\",\"data\":\"iVBORw0KGgo=\"},{\"type\":\"text\",\"text\":\"camera metadata\"}]}";
@@ -57,7 +58,7 @@ internal static class HostAccessChecks
             using (var denied = await Post(new("tools", Arguments: arguments))) Check(denied.StatusCode == HttpStatusCode.Forbidden, "Browser-origin request was accepted.");
             client.DefaultRequestHeaders.Remove("Origin");
             var id = Guid.NewGuid().ToString();
-            var duplicate = new HostRequest("call", "mutate", arguments, id);
+            var duplicate = new HostRequest("call", "mutate", arguments, id, Target: "fixture");
             var replies = await Task.WhenAll(Post(duplicate), Post(duplicate));
             foreach (var reply in replies) { Check(reply.IsSuccessStatusCode, "Repeated identical call failed."); reply.Dispose(); }
             using (var formatted = await Post(duplicate with { Id = Guid.Parse(id).ToString("N").ToUpperInvariant() })) Check(formatted.IsSuccessStatusCode, "A UUID spelling change lost deduplication.");
@@ -70,7 +71,7 @@ internal static class HostAccessChecks
             Check(executions == 2, "A failed mutation was re-executed on retry.");
             for (var i = 0; i < 300; i++)
             {
-                using var response = await Post(new("call", "mutate", arguments, Guid.NewGuid().ToString()));
+                using var response = await Post(new("call", "mutate", arguments, Guid.NewGuid().ToString(), Target: "fixture"));
                 Check(response.IsSuccessStatusCode, "Connection stopped accepting new calls before 300 requests.");
             }
             using (var retry = await Post(duplicate)) Check(retry.IsSuccessStatusCode, "Old result was lost after 300 calls.");
@@ -97,34 +98,122 @@ internal static class HostAccessChecks
             }
             Console.WriteLine("PASS: real CLI round trip preserves image bytes, metadata, absolute artifact paths, and request IDs.");
 
+            async Task<(int Exit, string Output, string Error)> Cli(params string[] command)
+            {
+                var start = new ProcessStartInfo("dotnet") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+                start.Environment["DOTNET_ROLL_FORWARD"] = "Major";
+                start.ArgumentList.Add(Path.GetFullPath(cli));
+                foreach (var arg in command) start.ArgumentList.Add(arg);
+                using var child = Process.Start(start)!;
+                var output = child.StandardOutput.ReadToEndAsync();
+                var error = child.StandardError.ReadToEndAsync();
+                try { await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(15)); }
+                finally { if (!child.HasExited) child.Kill(entireProcessTree: true); }
+                return (child.ExitCode, await output, await error);
+            }
+            var instanceDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "rhDock", "host-tools", "connections");
+            using (var instance = new HostConnection(instanceDirectory, (request, _) =>
+            {
+                if (request.Method == "status") return Task.FromResult(JsonSerializer.Serialize(new { pid = Environment.ProcessId, target = "current-document" }));
+                if (request.Method == "call") request.CheckTarget("current-document");
+                return Task.FromResult(JsonSerializer.Serialize(new { source = request.Source, content = Array.Empty<object>() }));
+            }, publishInstance: true))
+            {
+                var selectedPid = Environment.ProcessId.ToString();
+                var discovered = await Cli("instances");
+                Check(discovered.Exit == 0, "Instance discovery failed: " + discovered.Error);
+                using var list = JsonDocument.Parse(discovered.Output);
+                Check(list.RootElement.GetProperty("instances").EnumerateArray().Any(i => i.GetProperty("pid").GetInt32() == Environment.ProcessId), "Live instance was not discovered.");
+                Check(!discovered.Output.Contains("token", StringComparison.Ordinal), "Discovery exposed a credential.");
+                var status = await Cli("--pid", selectedPid, "status");
+                Check(status.Exit == 0 && status.Output.Contains("current-document", StringComparison.Ordinal), "PID status failed: " + status.Error);
+                var call = await Cli("--pid", selectedPid, "call", "mutate", "--source", "fixture-chat");
+                Check(call.Exit == 0 && call.Output.Contains("fixture-chat", StringComparison.Ordinal), "PID call lost target or source: " + call.Error);
+                var stale = await Cli("--pid", selectedPid, "call", "mutate", "--target", "old-document");
+                Check(stale.Exit != 0, "Explicit stale target was accepted.");
+                var saved = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(instance.FilePath))!;
+                saved["started"] = 0L;
+                File.WriteAllText(instance.FilePath, saved.ToJsonString());
+                var reused = await Cli("--pid", selectedPid, "status");
+                Check(reused.Exit != 0 && reused.Error.Contains("PID was reused", StringComparison.Ordinal), "A stale PID descriptor was accepted.");
+                instance.Dispose();
+                var revoked = await Cli("--pid", selectedPid, "status");
+                Check(revoked.Exit != 0, "Disabled instance remained available through its PID.");
+            }
+            Console.WriteLine("PASS: real CLI instance discovery, PID routing, automatic/explicit targets, source labels, PID reuse rejection and revocation.");
+
             using var other = new HostConnection(folder, (_, _) => Task.FromResult("{}"));
-            using (var crossChat = await client.PostAsync(other.Endpoint, new StringContent("{}"))) Check(crossChat.StatusCode == HttpStatusCode.Forbidden, "A different chat's credential was accepted.");
+            using (var crossChat = await client.PostAsync(other.Endpoint, new StringContent("{}"))) Check(crossChat.StatusCode == HttpStatusCode.Forbidden, "A different capability's credential was accepted.");
             var path = connection.FilePath;
             connection.Dispose();
             Check(!connection.Connected && !File.Exists(path) && connection.Cancellation.IsCancellationRequested, "Disconnect did not revoke credentials and pending work.");
 
-            using var owner = new HostFixture(folder);
-            var approval = owner.Host.ApproveHostTool("run_csharp", "{}", false, owner.Connection.Cancellation);
-            Check(!approval.IsCompleted, "Ask mode automatically allowed arbitrary code.");
-            owner.Host.Answer("RejectOnce");
-            Check(!await approval, "Rejected tool was allowed.");
-            owner.Host.SetMode("plan");
-            Check(!await owner.Host.ApproveHostTool("rhdock_run", "{}", false, owner.Connection.Cancellation), "Plan mode allowed Run.");
-            Check(await owner.Host.ApproveHostTool("get_context", "{}", true, owner.Connection.Cancellation), "Plan mode rejected a context query.");
-            owner.Host.SetMode("edits");
-            var waiting = owner.Host.ApproveHostTool("rhdock_bake", "{}", false, owner.Connection.Cancellation);
-            Check(!waiting.IsCompleted, "Accept edits silently authorized document mutation.");
-            owner.Host.ToggleHostConnection("fixture");
-            try { Check(!await waiting, "Disconnected approval was allowed."); } catch (OperationCanceledException) { }
-            using (var next = new HostFixture(folder)) Check(next.Host.HostConnected, "New connection failed.");
-            Check(!new AgentHost().HostConnected, "A new chat inherited host authorization.");
-            Console.WriteLine("PASS: per-chat isolation, revocation, Ask/Plan/Accept edits permissions, and pending approval cancellation.");
+            using (var owner = new HostFixture(folder))
+            {
+                var another = new AgentHost();
+                another.SetMode("plan");
+                Check(another.HostConnected, "A different chat did not share the instance grant.");
+                owner.Host.Stop();
+                Check(another.HostConnected && owner.Connection.Connected, "Stopping a harness revoked the instance grant.");
+                another.ToggleHostConnection();
+                Check(!another.HostConnected && !owner.Host.HostConnected, "Disabling the instance left another chat connected.");
+                another.Stop();
+                owner.Host.ToggleHostConnection();
+                Check(owner.Host.HostConnected, "Re-enabling the instance failed.");
+                AgentHost.Shutdown();
+                Check(!owner.Host.HostConnected, "Shutdown retained an instance grant.");
+            }
+            Console.WriteLine("PASS: instance access shared across chats and permission modes; harness disposal preserves access; switch revokes it globally.");
+
+            var target = "document-a";
+            var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var resume = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var targetedExecutions = 0;
+            using (var targeted = new HostConnection(folder, async (request, ct) =>
+            {
+                request.CheckTarget(target);
+                entered.TrySetResult();
+                await resume.Task.WaitAsync(ct);
+                request.CheckTarget(target);
+                Interlocked.Increment(ref targetedExecutions);
+                return "{}";
+            }))
+            {
+                using var credential = JsonDocument.Parse(File.ReadAllText(targeted.FilePath));
+                using var caller = new HttpClient(new HttpClientHandler { UseProxy = false });
+                caller.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", credential.RootElement.GetProperty("token").GetString());
+                var request = new HostRequest("call", "mutate", arguments, Guid.NewGuid().ToString(), Target: target);
+                Task<HttpResponseMessage> Send(HostRequest value) => caller.PostAsync(targeted.Endpoint,
+                    new StringContent(JsonSerializer.Serialize(value, HostConnection.Json), Encoding.UTF8, "application/json"));
+                var queued = Send(request);
+                await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                target = "document-b";
+                resume.SetResult();
+                using (var stale = await queued) Check(!stale.IsSuccessStatusCode, "Queued work crossed documents.");
+                using (var retry = await Send(request)) Check(!retry.IsSuccessStatusCode, "Retry lost the rejected target outcome.");
+                using (var missingTarget = await Send(request with { Id = Guid.NewGuid().ToString(), Target = null }))
+                    Check(!missingTarget.IsSuccessStatusCode, "An unbound call was accepted.");
+                using (var fresh = await Send(request with { Id = Guid.NewGuid().ToString(), Target = target }))
+                    Check(fresh.IsSuccessStatusCode, "New document required reconnecting.");
+                Check(targetedExecutions == 1 && targeted.Connected, "Target change revoked the grant or executed stale work.");
+            }
+            Console.WriteLine("PASS: missing/stale targets and queued cross-document calls rejected; fresh work uses the same grant.");
+
+            var cardHost = AgentHost.Current;
+            var source = JsonSerializer.SerializeToElement(cardHost.Snapshot()).GetProperty("viewId").GetString();
+            AgentHost.RecordInstanceTool(source, "image", "Completed", "{}", "source-test",
+                "{\"content\":[{\"type\":\"image\",\"mimeType\":\"image/png\",\"data\":\"iVBORw0KGgo=\"}]}");
+            var card = JsonSerializer.SerializeToElement(cardHost.Snapshot()).GetProperty("items").EnumerateArray().Single(i => i.GetProperty("callId").GetString() == "host:source-test");
+            Check(card.GetProperty("images").GetArrayLength() == 1, "Instance tool result lost its source conversation image.");
+            Check(JsonSerializer.SerializeToElement(new AgentHost().Snapshot()).GetProperty("items").GetArrayLength() == 0, "Tool record leaked to a different conversation.");
+            AgentHost.Shutdown();
+            Console.WriteLine("PASS: source labels route tool/image cards to their conversation without sharing transcripts.");
 
             using (var fake = new AgentHostChecks.Fake(Path.Combine(folder, "source.txt")))
             {
                 var host = new AgentHost(_ => fake);
                 HostConnection? grant = null;
-                AgentHost.CreateHostConnection = (_, _) => grant = new HostConnection(Path.Combine(folder, "grant"), (_, _) => Task.FromResult("{}"));
+                AgentHost.CreateHostConnection = () => grant = new HostConnection(Path.Combine(folder, "grant"), (_, _) => Task.FromResult("{}"));
                 async Task Until(Func<bool> condition)
                 {
                     for (var i = 0; i < 200 && !condition(); i++) await Task.Delay(20);
@@ -134,19 +223,19 @@ internal static class HostAccessChecks
                 {
                     host.Connect(folder);
                     await Until(() => JsonSerializer.SerializeToElement(host.Snapshot()).GetProperty("status").GetString() == "ready");
-                    host.ToggleHostConnection(folder);
+                    host.ToggleHostConnection();
                     using var credential = JsonDocument.Parse(File.ReadAllText(grant!.FilePath));
                     host.Prompt(folder, "hold", [("selection", "chosen objects")], [], []);
                     await Until(() => fake.Holding);
                     Check(fake.LastPrompt!.Context.Any(c => c.Name == "host-tools") && fake.LastPrompt.Context.Any(c => c.Name == "selection"), "The shared prompt path lost connection instructions or user context.");
                     Check(!fake.LastPrompt.Tagged().Contains(credential.RootElement.GetProperty("token").GetString()!, StringComparison.Ordinal), "A credential leaked into model context.");
                     host.Prompt(folder, "queued after disconnect", [], [], []);
-                    host.ToggleHostConnection(folder);
+                    host.ToggleHostConnection();
                     fake.Finish.TrySetResult(new TurnResult("end_turn", null));
                     await Until(() => fake.LastPrompt?.Text == "queued after disconnect");
                     Check(!fake.LastPrompt!.Context.Any(c => c.Name == "host-tools"), "A queued message retained revoked connection instructions.");
                 }
-                finally { host.Stop(); AgentHost.CreateHostConnection = null; }
+                finally { host.Stop(); AgentHost.RevokeHostConnections(); AgentHost.CreateHostConnection = null; }
             }
             Console.WriteLine("PASS: shared harness prompts receive discovery without tokens; queued prompts respect disconnect.");
 
@@ -191,10 +280,10 @@ internal static class HostAccessChecks
         public HostFixture(string folder)
         {
             HostConnection? connection = null;
-            AgentHost.CreateHostConnection = (_, _) => connection = new HostConnection(folder, (_, _) => Task.FromResult("{}"));
-            Host.ToggleHostConnection("fixture");
+            AgentHost.CreateHostConnection = () => connection = new HostConnection(folder, (_, _) => Task.FromResult("{}"));
+            Host.ToggleHostConnection();
             Connection = connection ?? throw new Exception("Fixture host did not connect.");
         }
-        public void Dispose() { Host.Stop(); AgentHost.CreateHostConnection = null; }
+        public void Dispose() { Host.Stop(); AgentHost.RevokeHostConnections(); AgentHost.CreateHostConnection = null; }
     }
 }

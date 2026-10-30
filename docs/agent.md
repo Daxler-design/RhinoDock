@@ -31,9 +31,26 @@ An agent can edit files and run commands with your permissions. Read the [securi
 
 ## Rhino access with rhDockConnect
 
-Choose rhDockConnect from the slash menu, or submit `/rhdock-connect`, to enable or revoke access for the current conversation. The Connected row also lets you revoke it. Access belongs to this Rhino process, conversation, and document; switching or closing the document revokes its connections.
+Choose rhDockConnect from the slash menu, or submit `/rhdock-connect`, to enable access for the whole Rhino instance. All chats, harnesses and external CLI clients running as the same user can use that instance. Disabling it from any Connected row revokes every client. Access survives chat/harness disposal, panel closure and document/repository changes; it ends when disabled or Rhino exits, and starts disabled after restart.
 
-The bundled `rhdock` CLI lists and describes tools before calls. It provides Script state, input/Run/Preview/layout operations and integrated Rhino/Grasshopper tools adapted from McNeel RhinoAI. Calls use an authenticated loopback connection. No global MCP configuration is installed; unrelated MCP servers remain managed by your harness. Command and permission behavior follows the selected harness and its mode.
+The switch enables both read and write tools. Harness permission modes remain with the harness; the bridge has no second approval card and does not enforce a harness's Plan mode against direct write requests. Calls remain authenticated and validate their document/repository target before execution. A stale queued request is rejected instead of operating on the newly active document.
+
+For an external Windows terminal:
+
+```powershell
+$rhdock = "$env:LOCALAPPDATA\rhDock\host-tools\bin\rhdock.cmd"
+& $rhdock instances
+& $rhdock --pid RHINO_PID status
+& $rhdock --pid RHINO_PID tools
+& $rhdock --pid RHINO_PID describe get_context
+& $rhdock --pid RHINO_PID call get_context
+```
+
+Replace RHINO_PID with the intended enabled instance. The launcher is written when the plugin loads; global PATH is unchanged. The CLI verifies process start time so an old descriptor cannot silently select a reused PID. `status` returns document/repository details and an opaque target. For several commands on the same document, retain that target and pass `--target TARGET` on each call/resource. Inspect fresh state if it changes. Reuse the request ID, target and arguments after an uncertain mutation instead of issuing a replacement blindly.
+
+In-panel agents receive updated discovery instructions on each send/steer. External agents need the entry instructions once; [standalone Rhino access instructions](RHDOCK.md) can be attached without editing a main AGENTS.md. Optional `--source VIEW_ID` routes tool/image cards to an open conversation; source labels grant no authority. Every dispatched call records PID, source, request ID, tool and status in the host log.
+
+The CLI provides Script state, input/Run/Preview/layout operations and integrated Rhino/Grasshopper tools adapted from McNeel RhinoAI. No MCP configuration is installed; unrelated MCP servers remain managed by your harness.
 
 Where supported, the composer also exposes Claude Code Auto or Codex Auto-review. These are native review modes and differ from Allow all.
 

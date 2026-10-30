@@ -30,12 +30,11 @@ public sealed class RhinoDockPlugin : PlugIn
         return LoadReturnCode.Success;
     }
 
-    private static void OnActiveDocumentChanged(object? sender, global::Rhino.DocumentEventArgs e) => AgentHost.RevokeHostConnections();
+    private static void OnActiveDocumentChanged(object? sender, global::Rhino.DocumentEventArgs e) => HostTools.TargetChanged();
 
     private static void OnCloseDocument(object? sender, global::Rhino.DocumentEventArgs e)
     {
-        if (SingleScriptHost.Current.BoundDocument?.RuntimeSerialNumber == e.DocumentSerialNumber)
-            AgentHost.RevokeHostConnections();
+        HostTools.TargetChanged();
     }
 
     protected override void OnShutdown()

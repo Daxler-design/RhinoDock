@@ -1,6 +1,12 @@
 using rhDock.Core;
 using rhDock.Agents;
 
+if (args is ["--windows-handles"])
+{
+    await WindowsHandleChecks.Run();
+    return 0;
+}
+
 if (args is ["--git-worktree", var gitRoot, var gitBranch])
 {
     var tree = GitWorktreeInfo.Read(gitRoot) ?? throw new Exception("Git worktree not found.");

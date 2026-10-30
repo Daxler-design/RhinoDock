@@ -19,10 +19,10 @@ static class AgentProtocolChecks
             throw new Exception("Claude's success subtype with is_error must remain an error.");
         Console.WriteLine("PASS: Claude reports API errors even with a success subtype.");
         var outbound = new System.Collections.Concurrent.ConcurrentQueue<string>();
-        var start = new System.Diagnostics.ProcessStartInfo(Environment.ProcessPath!) { RedirectStandardInput = true, RedirectStandardOutput = true, UseShellExecute = false };
-        if (Path.GetFileNameWithoutExtension(Environment.ProcessPath) == "dotnet") start.ArgumentList.Add(typeof(AgentProtocolChecks).Assembly.Location);
-        start.ArgumentList.Add("--echo-agent");
-        using var peer = System.Diagnostics.Process.Start(start)!;
+        var launchArgs = new List<string>();
+        if (Path.GetFileNameWithoutExtension(Environment.ProcessPath) == "dotnet") launchArgs.Add(typeof(AgentProtocolChecks).Assembly.Location);
+        launchArgs.Add("--echo-agent");
+        using var peer = AgentProcess.Launch(Environment.ProcessPath!, launchArgs, Environment.CurrentDirectory, AgentProcess.ExtendedPath());
         var linesType = typeof(ClaudeCode).Assembly.GetType("rhDock.Agents.JsonLines")!;
         using var lines = (IDisposable)Activator.CreateInstance(linesType, [peer, (Action<string>)(line => { if (line.StartsWith("-> ")) outbound.Enqueue(line[3..]); })])!;
         liveType.GetField("Lines")!.SetValue(live, lines);

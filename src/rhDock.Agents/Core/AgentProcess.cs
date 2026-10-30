@@ -101,7 +101,7 @@ public static class AgentProcess
     }
 
     /// <summary>Starts an agent CLI with redirected UTF-8 streams; stderr goes to the log. Callers own the process and end it with <see cref="Kill"/>.</summary>
-    public static Process Launch(string executable, IReadOnlyList<string> args, string cwd, string path, Action<string>? log = null, IReadOnlyDictionary<string, string>? environment = null)
+    public static AgentChild Launch(string executable, IReadOnlyList<string> args, string cwd, string path, Action<string>? log = null, IReadOnlyDictionary<string, string>? environment = null)
     {
         // Agents write UTF-8; Windows would otherwise decode redirected streams with the console code page. No BOM on stdin.
         var utf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
@@ -129,9 +129,8 @@ public static class AgentProcess
         psi.Environment["PATH"] = path;
         foreach (var (name, value) in environment ?? new Dictionary<string, string>()) psi.Environment[name] = value;
 
-        var process = Process.Start(psi) ?? throw new InvalidOperationException($"Could not start {executable}.");
-        process.ErrorDataReceived += (_, e) => { if (!string.IsNullOrEmpty(e.Data)) log?.Invoke("stderr " + e.Data); };
-        process.BeginErrorReadLine();
+        var process = AgentChild.Start(psi);
+        process.ReadErrors(log);
         return process;
     }
 
@@ -154,7 +153,7 @@ public static class AgentProcess
     }
 
     /// <summary>Ends the process and everything it started.</summary>
-    public static void Kill(Process process)
+    public static void Kill(AgentChild process)
     {
         try { if (!process.HasExited) process.Kill(entireProcessTree: true); }
         catch (Exception) { }

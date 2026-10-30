@@ -12,13 +12,11 @@ public sealed record GitWorktreeInfo(string Root, string Branch)
         {
             try
             {
-                var info = new ProcessStartInfo("git") { WorkingDirectory = directory, UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
-                foreach (var arg in args) info.ArgumentList.Add(arg);
-                using var process = Process.Start(info)!;
+                using var process = AgentProcess.Launch("git", args, directory, AgentProcess.ExtendedPath());
+                process.StandardInput.Close();
                 var output = process.StandardOutput.ReadToEndAsync();
-                _ = process.StandardError.ReadToEndAsync();
-                if (!process.WaitForExit(2000)) { process.Kill(); return null; }
-                return process.ExitCode == 0 ? output.GetAwaiter().GetResult().Trim() : null;
+                if (!process.WaitForExit(2000)) { AgentProcess.Kill(process); return null; }
+                return process.Process.ExitCode == 0 ? output.GetAwaiter().GetResult().Trim() : null;
             }
             catch (Exception ex) when (ex is IOException or System.ComponentModel.Win32Exception or InvalidOperationException) { return null; }
         }

@@ -23,6 +23,7 @@ internal sealed partial class AgentHost
     }
     public static void Shutdown()
     {
+        RevokeHostConnections();
         AgentHost[] closing;
         lock (hostsGate) { closing = [.. hosts]; hosts.Clear(); current = null; }
         foreach (var host in closing) host.Stop();
@@ -67,7 +68,7 @@ internal sealed partial class AgentHost
     private string? ShownTitle() => title ?? AgentPrompt.Title(items.FirstOrDefault(i => i.Kind == "user")?.Text);
 
     // Done means unread: a turn that finished while another conversation was on screen, until this one is opened.
-    private string? ActivityStatus() => hostPermission is not null || permission is not null || question is not null ? "input"
+    private string? ActivityStatus() => permission is not null || question is not null ? "input"
         : status is "working" or "starting" ? "running" : status is "error" or "missing" || turnStop == "error" ? "error" : unread ? "done" : null;
     private bool unread;
 
@@ -233,7 +234,7 @@ internal sealed partial class AgentHost
                 rewound = rewound is { } r ? new { id = r.MessageId, text = r.Text, filesRestored } : null,
                 files = filesWanted ? files : null,
                 changes = changes.Select(c => new { path = c.Path, status = c.Status, added = c.Added, removed = c.Removed, diff = c.Diff }).ToArray(),
-                permission = (hostPermission ?? permission) is { } p ? new { title = p.Title, kind = p.Kind, detail = p.Detail, options = Decisions } : null,
+                permission = permission is { } p ? new { title = p.Title, kind = p.Kind, detail = p.Detail, options = Decisions } : null,
                 question = question is { } q ? new { id = q.RequestId, title = q.Title, fields = q.Fields.Select(f => new { key = f.Key, title = f.Title, description = f.Description, type = f.Type,
                     options = f.Options.Select(o => new { value = o.Value, label = o.Label, description = o.Description }).ToArray(), custom = f.Custom, required = f.Required }).ToArray() } : null,
             };
@@ -531,7 +532,6 @@ internal sealed partial class AgentHost
 
     public void Cancel()
     {
-        lock (gate) hostApproval?.TrySetResult(null);
         string? id;
         lock (gate) { id = sessionId; queue.Clear(); permission = null; question = null; permissions.Clear(); questions.Clear(); }
         Changed();
@@ -540,7 +540,7 @@ internal sealed partial class AgentHost
 
     public void NewConversation(string repository)
     {
-        lock (gate) if (sessionId is null && items.Count == 0 && !HostConnected) return;
+        lock (gate) if (sessionId is null && items.Count == 0) return;
         OpenConversation(repository).Connect(repository);
     }
 
@@ -573,7 +573,6 @@ internal sealed partial class AgentHost
     /// <summary>Answers the open permission request with AllowOnce, AllowAlways, or RejectOnce; null rejects it.</summary>
     public void Answer(string? choiceId)
     {
-        lock (gate) if (hostApproval is { } pending) { pending.TrySetResult(choiceId); return; }
         PermissionAsked? open;
         lock (gate) { open = permission; permission = permissions.FirstOrDefault(); if (permission is not null) permissions.RemoveAt(0); }
         Changed();
@@ -768,7 +767,6 @@ internal sealed partial class AgentHost
 
     public void Stop()
     {
-        DisconnectHost();
         IAgentHarness? old;
         lock (gate)
         {
