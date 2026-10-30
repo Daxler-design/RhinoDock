@@ -362,6 +362,7 @@ static class AgentHostChecks
             first.Side(repo, "the quote", "");
             var side = AgentHost.Current;
             await Until(() => State(side).GetProperty("status").GetString() == "ready");
+            var sideAgent = agents.Last();
             side.BackFromSide(repo);
             var tray = State(first).GetProperty("sideChats");
             if (AgentHost.Current != first || tray.GetArrayLength() != 1 || tray[0].GetProperty("viewId").GetString() != side.ViewId || tray[0].GetProperty("title").GetString() != "the quote")
@@ -372,6 +373,8 @@ static class AgentHostChecks
             if (AgentHost.Current != side) throw new Exception("Opening a side chat from the tray must show it.");
             side.BackFromSide(repo);
             first.CloseSide(repo, side.ViewId);
+            // CloseSide removes the tray entry immediately and disposes its harness asynchronously.
+            await Until(() => sideAgent.Disposed);
             if (AgentHost.Current != first || State(first).GetProperty("sideChats").GetArrayLength() != 0)
                 throw new Exception("Closing a side chat from the tray must remove it and keep the main conversation shown.");
             Console.WriteLine("PASS: side chats stay in the main conversation's tray after Back, reopen from it, and close from it.");
