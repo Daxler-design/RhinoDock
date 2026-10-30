@@ -1,6 +1,6 @@
 {
   "version": "0.6.11",
-  "sourceCommit": "acc2d6782f171ccc3a9a648feebc16e2383ef2e2",
+  "sourceCommit": "28eb4d1ac0d5b0c7fa88e0a416575bd526c4efb3",
   "snapshotDate": "2026-10-30",
   "sourceFiles": {
     ".editorconfig": "c1f069ba21a6798d67b2f4022dad92467c6c289309bc94691f1be552f7cd6ab7",
@@ -230,7 +230,7 @@
     "src/rhDock.Rhino/rhDock.Rhino.csproj": "6865605c5343b2975c0058fc597e8d7b17bab169a5cfe80abc3cd0e4127c925c",
     "tools/package-yak.proj": "e4e91603186ea3b66c79174bd47e58be29aae1308c8a63f42cc041724ac1c614",
     "tools/smoke/AgentChecks.cs": "f51799d91fe393bceaf24594a821336b3d4224849a2f25cd4c842d427e858875",
-    "tools/smoke/AgentHostChecks.cs": "2a5d80d8f55a3fbd41a25ee65285315c6574891deb8888d198a70dac17e93a1e",
+    "tools/smoke/AgentHostChecks.cs": "437c6eee94a5ac9d62d8d68b6cb5468e9f6cc8f9d4f27f118eb0eb4f00fe88b9",
     "tools/smoke/AgentProtocolChecks.cs": "8744297f775b2f388bd921f3345844dd800f2d489dbe28f176b8a69afb23cd6f",
     "tools/smoke/AutoRunPacerChecks.cs": "91053620cdb87744537f797ae2b65aa197cd90119dd18118503ebc371c21dff2",
     "tools/smoke/ExtensionScriptsChecks.cs": "d61329f0e3e56ad39a92df4c182d037353fecccec6edc7115fcd8c7334e24484",

@@ -156,7 +156,17 @@ static class AgentHostChecks
             await Switching(repo, file);
             await Naming(repo, file);
         }
-        finally { host.Stop(); Directory.Delete(repo, true); }
+        finally { host.Stop(); await DeleteFixture(repo); }
+    }
+
+    private static async Task DeleteFixture(string directory)
+    {
+        // A background Git metadata query can briefly retain the temporary working directory on Windows.
+        for (var attempt = 0; ; attempt++)
+        {
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, true); return; }
+            catch (IOException) when (attempt < 20) { await Task.Delay(100); }
+        }
     }
 
     // Live: the real host and agent, with one UI thread that Rhino's dispatcher waits for and that takes every snapshot, as the panel does.
@@ -225,7 +235,7 @@ static class AgentHostChecks
             await Ready(180);
             Console.WriteLine($"PASS: host Ask-mode edit asked ({asked.GetProperty("kind")} {asked.GetProperty("title")}); a.txt is \"{File.ReadAllText(Path.Combine(repo, "a.txt")).Trim()}\".");
         }
-        finally { AgentHost.Shutdown(); ui.CompleteAdding(); Directory.Delete(repo, true); }
+        finally { AgentHost.Shutdown(); ui.CompleteAdding(); await DeleteFixture(repo); }
     }
 
     // The title rule: a new unnamed conversation is titled once by its agent; a named or loaded one never is.
